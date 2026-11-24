@@ -35,6 +35,8 @@ keyAlias=rahyar-upload
 storeFile=app/rahyar-upload-key.jks
 ```
 
+برای ساخت خودکار فایل نصب در GitHub، فایل کلید را به صورت Base64 در Secret مخزن با نام `ANDROID_KEYSTORE_BASE64` قرار دهید و رمزها و نام مستعار را به ترتیب در Secrets با نام‌های `ANDROID_KEYSTORE_PASSWORD`، `ANDROID_KEY_PASSWORD` و `ANDROID_KEY_ALIAS` ذخیره کنید. سپس با ارسال برچسبی مانند `v1.0.1`، فایل امضاشدهٔ APK در بخش Releases منتشر می‌شود. این Secrets را در فایل‌های مخزن ننویسید.
+
 پایگاه‌دادهٔ Drift روی موبایل از SQLite بومی و روی وب از `sqlite3.wasm` و `drift_worker.js` استفاده می‌کند. وب باید با هدرهای زیر سرو شود تا ذخیره‌سازی اشتراکی WASM فعال بماند:
 
 ```text

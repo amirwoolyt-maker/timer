@@ -75,10 +75,10 @@ jobs:
           if ! flutter build apk --release 2>&1 | tee build.log; then
             echo "## Android build failure" >> "$GITHUB_STEP_SUMMARY"
             echo >> "$GITHUB_STEP_SUMMARY"
-            grep -E "(FAILURE:|What went wrong:|Could not|Execution failed|error:|\.dart:[0-9]+|Gradle task)" build.log | tail -n 80 >> "$GITHUB_STEP_SUMMARY" || true
+            awk '/\* What went wrong:/{show=1} show{print} /\* Try:/{exit}' build.log >> "$GITHUB_STEP_SUMMARY" || true
             while IFS= read -r line; do
               echo "::error::$line"
-            done < <(grep -E "(FAILURE:|What went wrong:|Could not|Execution failed|error:|\.dart:[0-9]+|Gradle task)" build.log | tail -n 25 || true)
+            done < <(awk '/\* What went wrong:/{show=1} show{print} /\* Try:/{exit}' build.log || true)
             exit 1
           fi
 

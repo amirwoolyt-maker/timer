@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Android release signing credentials. Never commit these files.
+/android/key.properties
+/android/app/*.jks
+
 # Symbolication related
 app.*.symbols
 

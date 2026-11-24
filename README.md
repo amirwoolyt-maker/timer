@@ -16,6 +16,25 @@ flutter run -d chrome
 flutter build web --release
 ```
 
+## امضای نسخهٔ اندروید
+
+برای اینکه نصب نسخهٔ جدید روی نسخهٔ قبلی به‌عنوان به‌روزرسانی پذیرفته شود، شناسهٔ برنامه (`ir.studypath.rahyar`) و کلید امضای انتشار باید ثابت بمانند و شمارهٔ ساخت در `pubspec.yaml` در هر انتشار افزایش یابد. فایل کلید و `android/key.properties` محرمانه‌اند؛ آن‌ها را در گیت یا مخزن عمومی قرار ندهید و از هر دو نسخهٔ پشتیبان امن تهیه کنید.
+
+ساخت نسخهٔ انتشار با تنظیمات محلی:
+
+```bash
+flutter build apk --release
+```
+
+برای ساخت روی دستگاه دیگری، همان فایل کلید را امن منتقل کرده و `android/key.properties` را با این قالب بسازید (`storeFile` نسبت به پوشهٔ `android` است):
+
+```properties
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=rahyar-upload
+storeFile=app/rahyar-upload-key.jks
+```
+
 پایگاه‌دادهٔ Drift روی موبایل از SQLite بومی و روی وب از `sqlite3.wasm` و `drift_worker.js` استفاده می‌کند. وب باید با هدرهای زیر سرو شود تا ذخیره‌سازی اشتراکی WASM فعال بماند:
 
 ```text

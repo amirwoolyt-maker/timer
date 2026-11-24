@@ -1,13 +1,18 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val signingProperties = java.util.Properties()
+val signingProperties = Properties()
 val signingPropertiesFile = rootProject.file("key.properties")
-if (signingPropertiesFile.exists()) {
-    signingPropertiesFile.inputStream().use(signingProperties::load)
+if (signingPropertiesFile.isFile) {
+    FileInputStream(signingPropertiesFile).use { input ->
+        signingProperties.load(input)
+    }
 }
 
 android {
@@ -37,9 +42,14 @@ android {
 
     signingConfigs {
         create("release") {
+            val keystorePath = signingProperties.getProperty("storeFile")
+
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = rootProject.file(keystorePath)
+            }
+
             keyAlias = signingProperties.getProperty("keyAlias")
             keyPassword = signingProperties.getProperty("keyPassword")
-            storeFile = signingProperties.getProperty("storeFile")?.let { rootProject.file(it) }
             storePassword = signingProperties.getProperty("storePassword")
         }
     }

@@ -1,361 +1,708 @@
 part of '../../feature_pages.dart';
 
-class StudyTimerPage extends ConsumerStatefulWidget {
-  const StudyTimerPage({super.key});
-  @override
-  ConsumerState<StudyTimerPage> createState() => _StudyTimerPageState();
+final studyTimerProvider =
+    NotifierProvider<StudyTimerController, StudyTimerState>(
+      StudyTimerController.new,
+    );
+
+class StudyTimerState {
+  const StudyTimerState({
+    this.mode = 'pomodoro',
+    this.clock = const StudyClock(),
+    this.workMinutes = 25,
+    this.breakMinutes = 5,
+    this.breakPhase = false,
+    this.subject = '',
+    this.sessionId = '',
+    this.cycles = 0,
+    this.focusMode = false,
+    this.ready = false,
+    this.error,
+  });
+  final String mode, subject, sessionId;
+  final StudyClock clock;
+  final int workMinutes, breakMinutes, cycles;
+  final bool breakPhase, focusMode, ready;
+  final String? error;
+  bool get running => clock.running;
+  bool get countingUp => mode != 'pomodoro';
+  int get duration => (breakPhase ? breakMinutes : workMinutes) * 60;
+  int secondsAt(DateTime now) =>
+      countingUp ? clock.elapsedAt(now) : clock.remainingAt(now, duration);
+  StudyTimerState copyWith({
+    String? mode,
+    String? subject,
+    String? sessionId,
+    StudyClock? clock,
+    int? workMinutes,
+    int? breakMinutes,
+    int? cycles,
+    bool? breakPhase,
+    bool? focusMode,
+    bool? ready,
+    String? error,
+  }) => StudyTimerState(
+    mode: mode ?? this.mode,
+    clock: clock ?? this.clock,
+    workMinutes: workMinutes ?? this.workMinutes,
+    breakMinutes: breakMinutes ?? this.breakMinutes,
+    breakPhase: breakPhase ?? this.breakPhase,
+    subject: subject ?? this.subject,
+    sessionId: sessionId ?? this.sessionId,
+    cycles: cycles ?? this.cycles,
+    focusMode: focusMode ?? this.focusMode,
+    ready: ready ?? this.ready,
+    error: error,
+  );
 }
 
-class _StudyTimerPageState extends ConsumerState<StudyTimerPage> {
-  Timer? timer;
-  int seconds = 1500;
-  int initial = 1500;
-  bool active = false;
-  bool stopwatch = false;
-  final subject = TextEditingController(text: 'مطالعه امروز');
-
+class StudyTimerController extends Notifier<StudyTimerState> {
+  Timer? _ticker;
+  Future<void> _writes = Future.value();
+  bool _finishing = false;
   @override
-  void dispose() {
-    timer?.cancel();
-    subject.dispose();
-    super.dispose();
+  StudyTimerState build() {
+    ref.onDispose(() => _ticker?.cancel());
+    Future.microtask(_restore);
+    return const StudyTimerState();
   }
 
-  void _toggle() {
-    if (active) {
-      timer?.cancel();
-      setState(() => active = false);
-      return;
-    }
-    setState(() => active = true);
-    timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (seconds <= 0) {
-        timer?.cancel();
-        setState(() => active = false);
-        _saveSession();
+  Future<void> _restore() async {
+    try {
+      final db = ref.read(databaseProvider);
+      final preference = await (db.select(
+        db.appPreferences,
+      )..where((p) => p.key.equals('activeStudyTimer'))).getSingleOrNull();
+      if (!ref.mounted) return;
+      if (preference != null) {
+        final saved = jsonDecode(preference.value) as Map<String, dynamic>;
+        final mode = saved['mode'] as String? ?? 'pomodoro';
+        state = StudyTimerState(
+          mode: ['pomodoro', 'study', 'stopwatch'].contains(mode)
+              ? mode
+              : 'pomodoro',
+          clock: StudyClock(
+            elapsedSeconds: (saved['elapsed'] as int? ?? 0).clamp(0, 31536000),
+            runningSince: DateTime.tryParse(saved['since'] as String? ?? ''),
+          ),
+          workMinutes: (saved['work'] as int? ?? 25).clamp(1, 180),
+          breakMinutes: (saved['break'] as int? ?? 5).clamp(1, 60),
+          breakPhase: saved['breakPhase'] == true,
+          subject: saved['subject'] as String? ?? '',
+          sessionId: saved['id'] as String? ?? '',
+          cycles: saved['cycles'] as int? ?? 0,
+          focusMode: saved['focusMode'] == true,
+          ready: true,
+        );
       } else {
-        setState(() => seconds += stopwatch ? 1 : -1);
+        state = state.copyWith(ready: true);
       }
-    });
+      _ensureTicker();
+      _tick();
+    } catch (_) {
+      if (ref.mounted) {
+        state = state.copyWith(
+          ready: true,
+          error: 'بازیابی زمان‌سنج ممکن نشد؛ می‌توانی جلسهٔ تازه‌ای شروع کنی.',
+        );
+      }
+    }
   }
 
-  Future<void> _saveSession() async {
-    final elapsed = stopwatch ? seconds : initial - seconds;
-    if (elapsed < 60) return;
+  void _ensureTicker() {
+    _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  void _tick() {
+    if (!ref.mounted || !state.running) return;
+    if (!state.countingUp &&
+        state.clock.elapsedAt(DateTime.now()) >= state.duration) {
+      unawaited(_completePhase());
+    } else {
+      state = state.copyWith();
+    }
+  }
+
+  Future<void> _persist() {
+    final snapshot = state;
+    final payload = jsonEncode({
+      'mode': snapshot.mode,
+      'elapsed': snapshot.clock.elapsedSeconds,
+      'since': snapshot.clock.runningSince?.toIso8601String(),
+      'work': snapshot.workMinutes,
+      'break': snapshot.breakMinutes,
+      'breakPhase': snapshot.breakPhase,
+      'subject': snapshot.subject,
+      'id': snapshot.sessionId,
+      'cycles': snapshot.cycles,
+      'focusMode': snapshot.focusMode,
+    });
     final db = ref.read(databaseProvider);
+    _writes = _writes
+        .catchError((Object _) {})
+        .then((_) => db.savePreference('activeStudyTimer', payload));
+    return _writes;
+  }
+
+  Future<void> configure({
+    String? mode,
+    int? workMinutes,
+    int? breakMinutes,
+    String? subject,
+    bool? focusMode,
+  }) async {
+    if (!state.ready || state.running || state.clock.elapsedSeconds > 0) return;
+    state = state.copyWith(
+      mode: mode,
+      workMinutes: workMinutes,
+      breakMinutes: breakMinutes,
+      subject: subject,
+      focusMode: focusMode,
+      breakPhase: mode == null ? null : false,
+    );
+    await _persist();
+  }
+
+  Future<void> start({bool focusMode = false}) async {
+    if (!state.ready || state.running || _finishing) return;
+    state = state.copyWith(
+      clock: state.clock.start(DateTime.now()),
+      sessionId: state.sessionId.isEmpty ? const Uuid().v4() : state.sessionId,
+      focusMode: focusMode,
+    );
+    _ensureTicker();
+    if (focusMode) await PlatformServices.setFocusMode(true);
+    await _persist();
+  }
+
+  Future<void> pause() async {
+    if (!state.running) return;
+    state = state.copyWith(clock: state.clock.pause(DateTime.now()));
+    if (state.focusMode) await PlatformServices.setFocusMode(false);
+    await _persist();
+  }
+
+  Future<void> reset() async {
+    if (state.running || _finishing) return;
+    state = state.copyWith(
+      clock: const StudyClock(),
+      sessionId: '',
+      breakPhase: false,
+    );
+    await _persist();
+  }
+
+  Future<void> finish() async {
+    if (_finishing) return;
+    _finishing = true;
+    final snapshot = state;
+    state = state.copyWith(clock: state.clock.pause(DateTime.now()));
+    if (snapshot.focusMode) await PlatformServices.setFocusMode(false);
+    try {
+      if (!snapshot.breakPhase) {
+        await _saveSession(snapshot, snapshot.clock.elapsedAt(DateTime.now()));
+      }
+      if (!ref.mounted) return;
+      state = state.copyWith(
+        clock: const StudyClock(),
+        sessionId: '',
+        breakPhase: false,
+        focusMode: false,
+      );
+      await _persist();
+    } catch (_) {
+      if (ref.mounted) {
+        state = state.copyWith(error: 'ذخیرهٔ جلسه انجام نشد؛ دوباره تلاش کن.');
+      }
+    } finally {
+      _finishing = false;
+    }
+  }
+
+  Future<void> _saveSession(StudyTimerState snapshot, int seconds) async {
+    if (seconds < 60 || snapshot.sessionId.isEmpty) return;
+    final db = ref.read(databaseProvider);
+    // Stable session ID makes retrying a failed save safe.
     await db
         .into(db.studySessions)
-        .insert(
+        .insertOnConflictUpdate(
           StudySessionsCompanion.insert(
-            id: const Uuid().v4(),
+            id: snapshot.sessionId,
             subject: Value(
-              subject.text.trim().isEmpty ? 'مطالعه آزاد' : subject.text.trim(),
+              snapshot.subject.trim().isEmpty
+                  ? 'مطالعه آزاد'
+                  : snapshot.subject.trim(),
             ),
-            durationMinutes: elapsed ~/ 60,
-            startedAt: DateTime.now().subtract(Duration(seconds: elapsed)),
+            durationMinutes: seconds ~/ 60,
+            startedAt: DateTime.now().subtract(Duration(seconds: seconds)),
           ),
         );
   }
 
+  Future<void> _completePhase() async {
+    if (_finishing) return;
+    _finishing = true;
+    final snapshot = state;
+    state = state.copyWith(clock: StudyClock(elapsedSeconds: state.duration));
+    if (snapshot.focusMode) await PlatformServices.setFocusMode(false);
+    try {
+      if (!snapshot.breakPhase) await _saveSession(snapshot, snapshot.duration);
+      if (!ref.mounted) return;
+      state = state.copyWith(
+        clock: const StudyClock(),
+        sessionId: '',
+        breakPhase: !snapshot.breakPhase,
+        cycles: snapshot.cycles + (snapshot.breakPhase ? 0 : 1),
+      );
+      await _persist();
+      unawaited(SystemSound.play(SystemSoundType.alert));
+      unawaited(HapticFeedback.mediumImpact());
+    } catch (_) {
+      if (ref.mounted) {
+        state = state.copyWith(
+          error: 'ذخیرهٔ جلسه انجام نشد؛ دکمهٔ پایان را بزن.',
+        );
+      }
+    } finally {
+      _finishing = false;
+    }
+  }
+}
+
+class StudyTimerPage extends ConsumerWidget {
+  const StudyTimerPage({this.focusOnly = false, super.key});
+  final bool focusOnly;
   @override
-  Widget build(BuildContext context) => PageFrame(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'هر دقیقه، یک قدم به هدفت نزدیک‌تر.',
-          style: TextStyle(color: AppColors.muted, fontSize: 12),
-        ),
-        const SizedBox(height: 15),
-        SegmentedButton<bool>(
-          segments: const [
-            ButtonSegment(value: false, label: Text('پومودورو')),
-            ButtonSegment(value: true, label: Text('کرنومتر')),
-          ],
-          selected: {stopwatch},
-          onSelectionChanged: (values) => setState(() {
-            stopwatch = values.first;
-            seconds = stopwatch ? 0 : 1500;
-            initial = seconds;
-          }),
-        ),
-        const SizedBox(height: 17),
-        _timerCard(),
-        const SectionTitle('تنظیم سریع'),
-        Row(
-          children: [
-            for (final mins in [15, 25, 45, 60])
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 5),
-                  child: OutlinedButton(
-                    onPressed: active || stopwatch
-                        ? null
-                        : () => setState(() {
-                            seconds = mins * 60;
-                            initial = seconds;
-                          }),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(studyTimerProvider);
+    final controller = ref.read(studyTimerProvider.notifier);
+    final english = ref.watch(languageProvider);
+    String tr(String fa, String en) => english ? en : fa;
+    String digits(Object value) => english ? '$value' : faDigits(value);
+    final seconds = state.secondsAt(DateTime.now());
+    final locked = state.running || state.clock.elapsedSeconds > 0;
+    final sessions = ref.watch(_todayStudySessionsProvider);
+    return PageFrame(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            tr(
+              'هر دقیقه، یک قدم به هدفت نزدیک‌تر.',
+              'One focused minute at a time.',
+            ),
+            style: const TextStyle(color: AppColors.muted, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          if (!focusOnly)
+            SegmentedButton<String>(
+              segments: [
+                ButtonSegment(
+                  value: 'pomodoro',
+                  label: Text(tr('پومودورو', 'Pomodoro')),
+                ),
+                ButtonSegment(
+                  value: 'study',
+                  label: Text(tr('تایمر درس', 'Study')),
+                ),
+                ButtonSegment(
+                  value: 'stopwatch',
+                  label: Text(tr('کرنومتر', 'Stopwatch')),
+                ),
+              ],
+              selected: {state.mode},
+              onSelectionChanged: locked || !state.ready
+                  ? null
+                  : (values) => controller.configure(mode: values.first),
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: AppColors.emerald.withValues(alpha: .28),
+              ),
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  state.breakPhase ? Icons.coffee_outlined : Icons.spa_outlined,
+                  color: AppColors.emerald,
+                  size: 30,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  state.breakPhase
+                      ? tr('زمان استراحت', 'Break time')
+                      : state.running
+                      ? tr('در حال تمرکز', 'Focus in progress')
+                      : tr('برای تمرکز آماده‌ای؟', 'Ready to focus?'),
+                  style: const TextStyle(color: AppColors.muted),
+                ),
+                const SizedBox(height: 18),
+                Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
                     child: Text(
-                      '${faDigits(mins)} دقیقه',
-                      style: const TextStyle(fontSize: 10),
+                      english
+                          ? formatDuration(seconds).replaceAllMapped(
+                              RegExp('[۰-۹]'),
+                              (m) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(m[0]!).toString(),
+                            )
+                          : formatDuration(seconds),
+                      key: const Key('timer-display'),
+                      style: const TextStyle(
+                        fontSize: 56,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 3,
+                      ),
                     ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 18),
+                if (!state.countingUp)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: LinearProgressIndicator(
+                      value: 1 - seconds / state.duration,
+                      backgroundColor: AppColors.emerald.withValues(alpha: .12),
+                      color: AppColors.emerald,
+                      minHeight: 5,
+                    ),
+                  ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: locked
+                        ? null
+                        : () => _subject(context, ref, state.subject),
+                    icon: const Icon(Icons.menu_book_outlined, size: 18),
+                    label: Text(
+                      state.subject.isEmpty
+                          ? tr('انتخاب درس یا موضوع', 'Choose a subject')
+                          : state.subject,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        key: const Key('timer-toggle'),
+                        onPressed: !state.ready
+                            ? null
+                            : () => state.running
+                                  ? controller.pause()
+                                  : controller.start(focusMode: focusOnly),
+                        icon: Icon(
+                          state.running
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                        ),
+                        label: Text(
+                          state.running
+                              ? tr('مکث', 'Pause')
+                              : state.clock.elapsedSeconds > 0
+                              ? tr('ادامه', 'Resume')
+                              : tr('شروع', 'Start'),
+                        ),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(44),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: const Key('timer-finish'),
+                        onPressed:
+                            !state.ready ||
+                                (!state.running &&
+                                    state.clock.elapsedSeconds == 0)
+                            ? null
+                            : controller.finish,
+                        icon: const Icon(Icons.stop_rounded, size: 19),
+                        label: Text(tr('پایان و ثبت', 'Finish and save')),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: tr('شروع دوباره', 'Reset'),
+                      onPressed: state.running ? null : controller.reset,
+                      icon: const Icon(Icons.refresh_rounded),
+                    ),
+                  ],
+                ),
+                if (state.error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(
+                      state.error!,
+                      style: const TextStyle(color: AppColors.red),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (state.mode == 'pomodoro') ...[
+            SectionTitle(tr('زمان کار و استراحت', 'Work and break duration')),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: locked ? null : () => _settings(context, ref),
+                    icon: const Icon(Icons.tune_rounded, size: 17),
+                    label: Text(
+                      '${digits(state.workMinutes)} ${tr('کار', 'work')} / ${digits(state.breakMinutes)} ${tr('استراحت', 'break')}',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${digits(state.cycles)} ${tr('چرخه', 'cycles')}',
+                  style: const TextStyle(
+                    color: AppColors.emerald,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final minutes in [15, 25, 45, 60])
+                  ChoiceChip(
+                    label: Text('${digits(minutes)} ${tr('دقیقه', 'min')}'),
+                    selected: state.workMinutes == minutes,
+                    onSelected: locked
+                        ? null
+                        : (_) => controller.configure(workMinutes: minutes),
+                  ),
+              ],
+            ),
           ],
-        ),
-        const SectionTitle('آمار امروز'),
-        FutureBuilder<List<StudySession>>(
-          future: ref.read(databaseProvider).sessionsForToday(),
-          builder: (context, snapshot) {
-            final sum =
-                snapshot.data?.fold<int>(
-                  0,
-                  (value, item) => value + item.durationMinutes,
-                ) ??
-                0;
-            return InfoTile(
-              icon: Icons.insights_rounded,
-              title: '${faDigits(sum)} دقیقه مطالعه ثبت شده',
-              subtitle: 'هدف امروز: ۱۸۰ دقیقه',
-              color: AppColors.emerald,
-            );
-          },
-        ),
-      ],
-    ),
-  );
-
-  Widget _timerCard() => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(vertical: 25),
-    decoration: BoxDecoration(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(21),
-      border: Border.all(color: AppColors.border),
-    ),
-    child: Column(
-      children: [
-        Text(
-          stopwatch ? 'کرنومتر آزاد' : 'جلسه تمرکز',
-          style: const TextStyle(color: AppColors.muted, fontSize: 12),
-        ),
-        const SizedBox(height: 11),
-        Text(
-          formatDuration(seconds),
-          style: const TextStyle(
-            fontSize: 55,
-            fontWeight: FontWeight.w300,
-            letterSpacing: 2,
-          ),
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          width: 205,
-          child: TextField(
-            controller: subject,
-            textAlign: TextAlign.center,
-            decoration: const InputDecoration(hintText: 'موضوع مطالعه'),
-          ),
-        ),
-        const SizedBox(height: 17),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton(
-              onPressed: active
-                  ? null
-                  : () => setState(() {
-                      seconds = stopwatch ? 0 : 1500;
-                      initial = seconds;
-                    }),
-              icon: const Icon(Icons.refresh_rounded),
+          SectionTitle(tr('مطالعهٔ امروز', 'Today’s study')),
+          sessions.when(
+            data: (items) => Column(
+              children: [
+                InfoTile(
+                  icon: Icons.insights_rounded,
+                  title:
+                      '${digits(items.fold<int>(0, (sum, item) => sum + item.durationMinutes))} ${tr('دقیقه مطالعه ثبت‌شده', 'minutes recorded')}',
+                  subtitle: tr(
+                    'جلسه‌های یک دقیقه‌ای و بیشتر به آمار اضافه می‌شوند.',
+                    'Sessions of one minute or more count toward your progress.',
+                  ),
+                  color: AppColors.emerald,
+                ),
+                ...items
+                    .take(8)
+                    .map(
+                      (session) => InfoTile(
+                        icon: Icons.history_rounded,
+                        title: session.subject,
+                        subtitle:
+                            '${digits(session.durationMinutes)} ${tr('دقیقه', 'min')} · ${formatClock(session.startedAt)}',
+                        color: AppColors.blue,
+                      ),
+                    ),
+              ],
             ),
-            const SizedBox(width: 12),
-            FilledButton(
-              onPressed: _toggle,
-              style: FilledButton.styleFrom(
-                shape: const CircleBorder(),
-                minimumSize: const Size(60, 60),
-                backgroundColor: AppColors.emerald,
-                foregroundColor: const Color(0xFF061B13),
-              ),
-              child: Icon(
-                active ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                size: 31,
-              ),
+            error: (_, _) => Text(
+              tr('خواندن آمار ممکن نشد.', 'Could not load study history.'),
             ),
-            const SizedBox(width: 12),
-            IconButton(
+            loading: () => const LinearProgressIndicator(),
+          ),
+          if (focusOnly && PlatformServices.supportsBackgroundAlarms)
+            OutlinedButton.icon(
               onPressed: () async {
-                await _saveSession();
-                timer?.cancel();
-                if (mounted) {
-                  setState(() {
-                    active = false;
-                    seconds = stopwatch ? 0 : 1500;
-                  });
-                }
+                await PlatformServices.requestFocusPermission();
               },
-              icon: const Icon(Icons.stop_rounded, color: AppColors.red),
+              icon: const Icon(Icons.notifications_off_outlined, size: 18),
+              label: Text(
+                tr('دسترسی حالت مزاحم نشوید', 'Do Not Disturb permission'),
+              ),
             ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-class FocusModePage extends ConsumerStatefulWidget {
-  const FocusModePage({super.key});
-  @override
-  ConsumerState<FocusModePage> createState() => _FocusModePageState();
-}
-
-class _FocusModePageState extends ConsumerState<FocusModePage> {
-  bool active = false;
-  int seconds = 25 * 60;
-  Timer? timer;
-
-  @override
-  void dispose() {
-    timer?.cancel();
-    super.dispose();
+          if (focusOnly)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                tr(
+                  'برای خروج از جلسهٔ فعال، تأیید لازم است. برای سکوت اعلان‌های سیستم از حالت مزاحم نشوید دستگاه استفاده کن.',
+                  'Leaving an active focus session requires confirmation. Use your device’s Do Not Disturb setting for system notifications.',
+                ),
+                style: const TextStyle(color: AppColors.muted, fontSize: 11),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
-  void _toggle() {
-    if (active) {
-      timer?.cancel();
-      setState(() => active = false);
+  Future<void> _subject(
+    BuildContext context,
+    WidgetRef ref,
+    String current,
+  ) async {
+    final text = TextEditingController(text: current);
+    final books = await ref
+        .read(databaseProvider)
+        .select(ref.read(databaseProvider).books)
+        .get();
+    if (!context.mounted) {
+      text.dispose();
       return;
     }
-    setState(() => active = true);
-    timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (seconds <= 1) {
-        timer?.cancel();
-        setState(() {
-          seconds = 0;
-          active = false;
-        });
-        _saveSession(25);
-      } else {
-        setState(() => seconds--);
-      }
-    });
-  }
-
-  Future<void> _saveSession(int minutes) async {
-    if (minutes <= 0) return;
-    final db = ref.read(databaseProvider);
-    await db
-        .into(db.studySessions)
-        .insert(
-          StudySessionsCompanion.insert(
-            id: const Uuid().v4(),
-            subject: const Value('جلسه تمرکز'),
-            durationMinutes: minutes,
-            startedAt: DateTime.now().subtract(Duration(minutes: minutes)),
-          ),
-        );
-  }
-
-  @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !active,
-    onPopInvokedWithResult: (didPop, _) async {
-      if (!didPop && active) {
-        final leave = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('آیا مطمئنی؟'),
-            content: const Text('با خروج از حالت تمرکز، جلسه متوقف می‌شود.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('ادامه'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('خروج'),
-              ),
-            ],
-          ),
-        );
-        if (leave == true && mounted) {
-          timer?.cancel();
-          setState(() => active = false);
-        }
-      }
-    },
-    child: PageFrame(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'حالت تمرکز',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'یک بازه بساز و همه حواست را به هدفت بده.',
-            style: TextStyle(color: AppColors.muted, fontSize: 12),
-          ),
-          const SizedBox(height: 25),
-          Center(
-            child: Container(
-              width: 200,
-              height: 200,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: AppColors.emerald.withValues(alpha: .35),
-                  width: 11,
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('موضوع مطالعه'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: text,
+                autofocus: true,
+                maxLength: 80,
+                decoration: const InputDecoration(
+                  labelText: 'درس یا موضوع دلخواه',
                 ),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    formatDuration(seconds),
-                    style: TextStyle(fontSize: 48, fontWeight: FontWeight.w300),
-                  ),
-                  Text(
-                    'دقیقه تمرکز',
-                    style: TextStyle(color: AppColors.muted, fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
+              if (books.isNotEmpty)
+                Wrap(
+                  spacing: 5,
+                  children: books
+                      .map(
+                        (book) => ActionChip(
+                          label: Text(book.title),
+                          onPressed: () => text.text = book.title,
+                        ),
+                      )
+                      .toList(),
+                ),
+            ],
           ),
-          const SizedBox(height: 22),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _toggle,
-              icon: Icon(active ? Icons.pause : Icons.play_arrow),
-              label: Text(active ? 'مکث جلسه' : 'شروع تمرکز'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(44),
-                backgroundColor: AppColors.emerald,
-                foregroundColor: const Color(0xFF041B12),
-              ),
-            ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('انصراف'),
           ),
-          const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: active ? null : () => setState(() => seconds = 25 * 60),
-            icon: const Icon(Icons.refresh_rounded, size: 17),
-            label: const Text('شروع دوباره جلسه'),
-          ),
-          const SizedBox(height: 12),
-          const InfoTile(
-            icon: Icons.notifications_off_outlined,
-            title: 'اعلان‌های داخل برنامه خاموش‌اند',
-            subtitle: 'خاموش‌کردن اعلان‌های سیستم نیازمند دسترسی دستگاه است.',
-            color: AppColors.emerald,
+          FilledButton(
+            onPressed: () => Navigator.pop(context, text.text.trim()),
+            child: const Text('انتخاب'),
           ),
         ],
       ),
-    ),
+    );
+    text.dispose();
+    if (saved != null) {
+      await ref.read(studyTimerProvider.notifier).configure(subject: saved);
+    }
+  }
+
+  Future<void> _settings(BuildContext context, WidgetRef ref) async {
+    final state = ref.read(studyTimerProvider);
+    var work = state.workMinutes.toDouble(),
+        rest = state.breakMinutes.toDouble();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialog) => AlertDialog(
+          title: const Text('زمان دلخواه'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('مطالعه: ${faDigits(work.round())} دقیقه'),
+              Slider(
+                value: work,
+                min: 1,
+                max: 180,
+                divisions: 179,
+                onChanged: (v) => setDialog(() => work = v),
+              ),
+              Text('استراحت: ${faDigits(rest.round())} دقیقه'),
+              Slider(
+                value: rest,
+                min: 1,
+                max: 60,
+                divisions: 59,
+                onChanged: (v) => setDialog(() => rest = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('انصراف'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('ذخیره'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved == true) {
+      await ref
+          .read(studyTimerProvider.notifier)
+          .configure(workMinutes: work.round(), breakMinutes: rest.round());
+    }
+  }
+}
+
+final _todayStudySessionsProvider = StreamProvider<List<StudySession>>((ref) {
+  final db = ref.watch(databaseProvider);
+  final now = DateTime.now(), start = DateTime.now();
+  final midnight = DateTime(start.year, start.month, start.day);
+  return (db.select(db.studySessions)
+        ..where(
+          (row) =>
+              row.startedAt.isBiggerOrEqualValue(midnight) &
+              row.startedAt.isSmallerThanValue(
+                DateTime(now.year, now.month, now.day + 1),
+              ),
+        )
+        ..orderBy([(row) => OrderingTerm.desc(row.startedAt)]))
+      .watch();
+});
+
+class FocusModePage extends ConsumerWidget {
+  const FocusModePage({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => PopScope(
+    canPop: !ref.watch(studyTimerProvider).running,
+    onPopInvokedWithResult: (didPop, _) async {
+      if (didPop) return;
+      final leave = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('آیا مطمئنی؟'),
+          content: const Text(
+            'با خروج، جلسهٔ تمرکز مکث می‌شود و پیشرفتت باقی می‌ماند.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('ادامهٔ تمرکز'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('خروج'),
+            ),
+          ],
+        ),
+      );
+      if (leave == true) await ref.read(studyTimerProvider.notifier).pause();
+    },
+    child: const StudyTimerPage(focusOnly: true),
   );
 }

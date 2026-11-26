@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:drift/drift.dart' hide Column;
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
@@ -6,9 +7,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shamsi_date/shamsi_date.dart';
 import 'package:uuid/uuid.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:geolocator/geolocator.dart';
 import '../core/theme/app_theme.dart';
 import '../core/state/app_state.dart';
 import '../core/utils/formatters.dart';
+import '../core/utils/study_clock.dart';
+import '../core/platform/platform_services.dart';
 import '../data/local/app_database.dart';
 import '../data/repositories/providers.dart';
 
@@ -17,6 +22,29 @@ part 'notes/presentation/notes_page.dart';
 part 'timers/presentation/timer_pages.dart';
 part 'social/presentation/community_page.dart';
 part 'more/presentation/more_pages.dart';
+part 'profile/presentation/profile_page.dart';
+
+/// Keep dialog controllers alive until the route has finished its exit animation.
+class _DialogControllers extends StatefulWidget {
+  const _DialogControllers({required this.controllers, required this.child});
+  final List<TextEditingController> controllers;
+  final Widget child;
+  @override
+  State<_DialogControllers> createState() => _DialogControllersState();
+}
+
+class _DialogControllersState extends State<_DialogControllers> {
+  @override
+  void dispose() {
+    for (final controller in widget.controllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 
 const featureTitles = <String, String>{
   'dashboard': 'داشبورد آمار',
@@ -80,7 +108,7 @@ class AppNavigation extends ConsumerWidget {
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppColors.border),
       ),
@@ -132,7 +160,7 @@ class PageFrame extends StatelessWidget {
   final Widget child;
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(16, 8, 16, 108),
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
     child: child,
   );
 }
@@ -147,11 +175,12 @@ class SectionTitle extends StatelessWidget {
     padding: const EdgeInsets.only(top: 15, bottom: 9),
     child: Row(
       children: [
-        Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+          ),
         ),
-        const Spacer(),
         if (action != null)
           TextButton(
             onPressed: onTap,
@@ -182,7 +211,7 @@ class StatCard extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: AppColors.border),
       ),
@@ -222,7 +251,7 @@ class EmptyState extends StatelessWidget {
     width: double.infinity,
     padding: const EdgeInsets.all(23),
     decoration: BoxDecoration(
-      color: AppColors.surface,
+      color: Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(18),
       border: Border.all(color: AppColors.border),
     ),
@@ -269,7 +298,7 @@ class InfoTile extends StatelessWidget {
     margin: const EdgeInsets.only(bottom: 8),
     padding: const EdgeInsets.all(13),
     decoration: BoxDecoration(
-      color: AppColors.surface,
+      color: Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(15),
       border: Border.all(color: AppColors.border),
     ),
@@ -307,136 +336,4 @@ class InfoTile extends StatelessWidget {
       ],
     ),
   );
-}
-
-class ProfilePage extends ConsumerWidget {
-  const ProfilePage({super.key});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => PageFrame(
-    child: Column(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: const Column(
-            children: [
-              CircleAvatar(
-                radius: 32,
-                backgroundColor: Color(0x2234D399),
-                child: Text('🌱', style: TextStyle(fontSize: 30)),
-              ),
-              SizedBox(height: 9),
-              Text(
-                'دانش‌آموز پرتلاش',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-              ),
-              Text(
-                'ریاضی · پایه دوازدهم',
-                style: TextStyle(color: AppColors.muted, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 11),
-        const InfoTile(
-          icon: Icons.menu_book_outlined,
-          title: 'کتاب‌های من',
-          subtitle: 'ثبت کتاب‌ها برای استفاده در همه بخش‌ها',
-          color: AppColors.emerald,
-        ),
-        const InfoTile(
-          icon: Icons.edit_outlined,
-          title: 'اطلاعات تحصیلی',
-          subtitle: 'رشته و پایه',
-          color: AppColors.purple,
-        ),
-        SectionTitle(
-          'کتاب‌های ذخیره‌شده',
-          action: 'افزودن',
-          onTap: () => _addBook(context, ref),
-        ),
-        ref
-            .watch(booksProvider)
-            .when(
-              data: (books) => books.isEmpty
-                  ? const Text(
-                      'هنوز کتابی اضافه نشده.',
-                      style: TextStyle(color: AppColors.muted, fontSize: 12),
-                    )
-                  : Column(
-                      children: books
-                          .map(
-                            (book) => InfoTile(
-                              icon: Icons.menu_book_rounded,
-                              title: book.title,
-                              subtitle: '${book.grade} · ${book.subject}',
-                              color: AppColors.emerald,
-                            ),
-                          )
-                          .toList(),
-                    ),
-              error: (error, _) => Text('$error'),
-              loading: () =>
-                  const CircularProgressIndicator(color: AppColors.emerald),
-            ),
-      ],
-    ),
-  );
-
-  static Future<void> _addBook(BuildContext context, WidgetRef ref) async {
-    final title = TextEditingController();
-    final grade = TextEditingController(text: 'دوازدهم');
-    final subject = TextEditingController(text: 'ریاضی');
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('افزودن کتاب'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: title,
-              decoration: const InputDecoration(labelText: 'نام کتاب'),
-            ),
-            TextField(
-              controller: grade,
-              decoration: const InputDecoration(labelText: 'مقطع'),
-            ),
-            TextField(
-              controller: subject,
-              decoration: const InputDecoration(labelText: 'درس'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('بی‌خیال'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(context, title.text.trim().isNotEmpty),
-            child: const Text('ذخیره'),
-          ),
-        ],
-      ),
-    );
-    if (saved != true) return;
-    final db = ref.read(databaseProvider);
-    await db
-        .into(db.books)
-        .insert(
-          BooksCompanion.insert(
-            id: const Uuid().v4(),
-            title: title.text.trim(),
-            grade: grade.text.trim(),
-            subject: Value(subject.text.trim()),
-          ),
-        );
-  }
 }

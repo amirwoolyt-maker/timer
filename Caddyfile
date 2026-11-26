@@ -1,25 +1,28 @@
-:81 {
+{$APP_ADDRESS::8080} {
+	root * {$APP_ROOT:build/web}
+	encode zstd gzip
+
 	header {
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
-		Cross-Origin-Resource-Policy "cross-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Revalidate entry points after deploying a corrected build.
+		Cache-Control "no-cache"
 	}
 
-	@transform_port_query {
-		query XTransformPort=*
+	handle /healthz {
+		respond "ok" 200
 	}
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
+	# Missing scripts/fonts/WASM must return 404 rather than index.html.
+	@assets path_regexp assets \.[a-zA-Z0-9]+$
+	handle @assets {
+		file_server
 	}
 
 	handle {
-		root * build/web
 		try_files {path} /index.html
 		file_server
 	}

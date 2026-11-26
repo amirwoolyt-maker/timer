@@ -40,6 +40,58 @@ ThemeData buildAppTheme({required bool dark}) {
           displayColor: dark ? AppColors.text : const Color(0xFF17211D),
         ),
     dividerColor: dark ? AppColors.border : const Color(0xFFE5E7EB),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 38),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        textStyle: const TextStyle(
+          fontFamily: 'Vazirmatn',
+          fontSize: 13.5,
+          fontWeight: FontWeight.w700,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 38),
+        foregroundColor: AppColors.emeraldDark,
+        textStyle: const TextStyle(
+          fontFamily: 'Vazirmatn',
+          fontSize: 13.5,
+          fontWeight: FontWeight.w600,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        side: BorderSide(color: AppColors.emerald.withValues(alpha: .45)),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        minimumSize: const Size(0, 32),
+        textStyle: const TextStyle(
+          fontFamily: 'Vazirmatn',
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    ),
+    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      backgroundColor: AppColors.emerald,
+      foregroundColor: Color(0xFF042519),
+      elevation: 3,
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: dark ? AppColors.surface : Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: dark ? AppColors.surface : Colors.white,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+    ),
     cardTheme: CardThemeData(
       color: dark ? AppColors.surface : Colors.white,
       elevation: 0,

@@ -1,4 +1,4 @@
-name: Android release
+name: Test and release
 
 on:
   workflow_dispatch:
@@ -9,15 +9,84 @@ on:
         default: v1.0.0
         type: string
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-release:
+  checks:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.1'
+          channel: stable
+          cache: true
+
+      - name: Check release version
+        id: version
+        env:
+          REQUESTED_TAG: ${{ inputs.version || github.ref_name }}
+          IS_RELEASE: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          version=$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$IS_RELEASE" = "true" ] && [ "$REQUESTED_TAG" != "v$version" ]; then
+            echo "::error::Release tag $REQUESTED_TAG must match app version v$version."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze Flutter
+        run: flutter analyze
+
+      - name: Test Flutter
+        run: flutter test --reporter expanded
+
+      - name: Test preview server
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Build self-contained web app
+        run: flutter build web --release --no-pub --no-web-resources-cdn
+
+      - name: Package web app
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          cd build/web
+          zip -r "../../dist/rahyar-web-${APP_VERSION}.zip" .
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-release
+          path: dist/rahyar-web-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+
+  build-and-release:
+    needs: checks
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -31,6 +100,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.50.1'
           channel: stable
           cache: true
 
@@ -89,10 +159,33 @@ jobs:
           name: android-build-diagnostics
           path: build.log
 
+      - name: Download tested web build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-release
+          path: dist
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Align release tag with tested source
+        env:
+          RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          git tag --force "$RELEASE_TAG" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$RELEASE_TAG"
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           tag_name: ${{ inputs.version || github.ref_name }}
           target_commitish: ${{ github.sha }}
-          files: build/app/outputs/flutter-apk/app-release.apk
+          fail_on_unmatched_files: true
+          files: |
+            build/app/outputs/flutter-apk/app-release.apk
+            dist/rahyar-web-${{ needs.checks.outputs.version }}.zip

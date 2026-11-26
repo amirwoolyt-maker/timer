@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import '../core/theme/app_theme.dart';
 import '../core/state/app_state.dart';
+import '../core/utils/alarm_challenge.dart';
 import '../core/utils/formatters.dart';
 import '../core/utils/study_clock.dart';
 import '../core/platform/platform_services.dart';
@@ -97,6 +98,9 @@ class AppNavigation extends ConsumerWidget {
     final labels = ref.watch(languageProvider)
         ? const ['Tasks', 'Focus', 'Notes', 'Community', 'More']
         : const ['کارها', 'تمرکز', 'یادداشت', 'همراهان', 'بیشتر'];
+    final compact =
+        MediaQuery.sizeOf(context).width < 340 ||
+        MediaQuery.textScalerOf(context).scale(10.5) > 12;
     const icons = [
       Icons.checklist_rounded,
       Icons.timer_outlined,
@@ -116,35 +120,49 @@ class AppNavigation extends ConsumerWidget {
         children: List.generate(AppTab.values.length, (index) {
           final active = selected.index == index;
           return Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => onSelect(AppTab.values[index]),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(vertical: 7),
-                decoration: BoxDecoration(
-                  color: active
-                      ? AppColors.emerald.withValues(alpha: .13)
-                      : Colors.transparent,
+            child: Semantics(
+              button: true,
+              selected: active,
+              label: labels[index],
+              child: Tooltip(
+                message: labels[index],
+                child: InkWell(
                   borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      icons[index],
-                      size: 21,
-                      color: active ? AppColors.emerald : AppColors.muted,
+                  onTap: () => onSelect(AppTab.values[index]),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    decoration: BoxDecoration(
+                      color: active
+                          ? AppColors.emerald.withValues(alpha: .13)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      labels[index],
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: active ? AppColors.emerald : AppColors.muted,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          icons[index],
+                          size: 21,
+                          color: active ? AppColors.emerald : AppColors.muted,
+                        ),
+                        if (!compact) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            labels[index],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: active
+                                  ? AppColors.emerald
+                                  : AppColors.muted,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),

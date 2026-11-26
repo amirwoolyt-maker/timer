@@ -18,9 +18,17 @@ object AlarmScheduler {
 
     fun save(context: Context, id: String, hour: Int, minute: Int, label: String): Boolean {
         require(id.isNotBlank() && hour in 0..23 && minute in 0..59)
+        val prefs = preferences(context)
+        val key = "alarm:$id"
+        val previous = prefs.getString(key, null)
         val record = JSONObject().put("id", id).put("hour", hour).put("minute", minute).put("label", label)
-        preferences(context).edit().putString("alarm:$id", record.toString()).apply()
-        return schedule(context, record)
+        prefs.edit().putString(key, record.toString()).apply()
+        val scheduled = try { schedule(context, record) } catch (_: Exception) { false }
+        if (scheduled) return true
+        val rollback = prefs.edit()
+        if (previous == null) rollback.remove(key) else rollback.putString(key, previous)
+        rollback.apply()
+        return false
     }
 
     fun schedule(context: Context, record: JSONObject): Boolean {
@@ -33,18 +41,46 @@ object AlarmScheduler {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val operation = pending(context, id)
         val exact = Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms()
-        if (exact) {
-            val show = PendingIntent.getActivity(context, id.hashCode(), Intent(context, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            manager.setAlarmClock(AlarmManager.AlarmClockInfo(whenToRing, show), operation)
-        } else {
-            manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, whenToRing, operation)
-        }
-        return exact
+        if (!exact) return false
+        val show = PendingIntent.getActivity(
+            context,
+            id.hashCode(),
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        manager.setAlarmClock(AlarmManager.AlarmClockInfo(whenToRing, show), operation)
+        return true
     }
 
     fun cancel(context: Context, id: String) {
+        unschedule(context, id)
+        clearSound(context, id)
+    }
+
+    fun unschedule(context: Context, id: String) {
         (context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pending(context, id))
         preferences(context).edit().remove("alarm:$id").apply()
+    }
+
+    fun clearSound(context: Context, id: String) {
+        val prefs = preferences(context)
+        val soundName = prefs.getString("sound:$id", null)
+        if (!soundName.isNullOrBlank()) {
+            val uri = Uri.parse(soundName)
+            val file = if (uri.scheme == "file") {
+                uri.path?.let { java.io.File(it) }
+            } else if (!soundName.contains('/') && !soundName.contains('\\')) {
+                context.getFileStreamPath(soundName)
+            } else null
+            if (file != null && file.canonicalFile.parentFile == context.filesDir.canonicalFile) {
+                file.delete()
+            }
+        }
+        prefs.edit()
+            .remove("sound:$id")
+            .remove("soundDuration:$id")
+            .remove("soundStart:$id")
+            .apply()
     }
 
     fun restore(context: Context) {

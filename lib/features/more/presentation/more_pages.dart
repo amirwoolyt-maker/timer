@@ -121,13 +121,17 @@ class MoreGrid extends ConsumerWidget {
                         ),
                       ),
                       const Spacer(),
-                      Text(
-                        english ? englishNames[index] : item.$2,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12,
+                      Tooltip(
+                        message: english ? englishNames[index] : item.$2,
+                        child: Text(
+                          english ? englishNames[index] : item.$2,
+                          maxLines: 2,
+                          softWrap: true,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                       if ((english ? englishDescriptions[index] : item.$3)
@@ -946,15 +950,23 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
     final db = ref.read(databaseProvider);
     try {
       if (enabled) {
-        await PlatformServices.requestAlarmPermissions();
-        await PlatformServices.scheduleAlarm(
-          alarm.id,
-          alarm.hour,
-          alarm.minute,
-          alarm.label,
-        );
+        if (PlatformServices.supportsBackgroundAlarms) {
+          final permissions = await PlatformServices.requestAlarmPermissions();
+          if (!permissions) {
+            throw StateError('Alarm permissions were not granted.');
+          }
+          final scheduled = await PlatformServices.scheduleAlarm(
+            alarm.id,
+            alarm.hour,
+            alarm.minute,
+            alarm.label,
+          );
+          if (!scheduled) throw StateError('The alarm could not be scheduled.');
+        }
       } else {
-        await PlatformServices.cancelAlarm(alarm.id);
+        if (PlatformServices.supportsBackgroundAlarms) {
+          await PlatformServices.unscheduleAlarm(alarm.id);
+        }
       }
       await (db.update(db.alarms)..where((r) => r.id.equals(alarm.id))).write(
         AlarmsCompanion(enabled: Value(enabled)),
@@ -963,7 +975,7 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       if (mounted) {
         _toolNotice(
           context,
-          'تنظیم آلارم ممکن نشد؛ مجوز اعلان و آلارم دقیق را بررسی کن.',
+          'آلارم تغییر نکرد؛ مجوز اعلان و آلارم دقیق را بررسی کن و دوباره تلاش کن.',
         );
       }
     }
@@ -1063,8 +1075,17 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
     Future<void>.delayed(const Duration(milliseconds: 350), label.dispose);
     if (saved != true || !mounted) return;
     final id = const Uuid().v4();
+    var inserted = false;
     try {
-      await PlatformServices.requestAlarmPermissions();
+      if (PlatformServices.supportsBackgroundAlarms &&
+          !await PlatformServices.requestAlarmPermissions()) {
+        if (!mounted) return;
+        _toolNotice(
+          context,
+          'مجوز اعلان، آلارم دقیق و نمایش تمام‌صفحه لازم است تا زنگ در پس‌زمینه اجرا شود.',
+        );
+        return;
+      }
       await db
           .into(db.alarms)
           .insert(
@@ -1076,14 +1097,29 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
               challengeLevel: Value(level),
             ),
           );
-      await PlatformServices.scheduleAlarm(
-        id,
-        selected.hour,
-        selected.minute,
-        title,
-      );
-      if (mounted) _toolNotice(context, 'آلارم روزانه ذخیره شد.');
+      inserted = true;
+      if (PlatformServices.supportsBackgroundAlarms) {
+        final scheduled = await PlatformServices.scheduleAlarm(
+          id,
+          selected.hour,
+          selected.minute,
+          title,
+        );
+        if (!scheduled) throw StateError('The alarm could not be scheduled.');
+      }
+      if (mounted) {
+        _toolNotice(
+          context,
+          PlatformServices.supportsBackgroundAlarms
+              ? 'آلارم روزانه ذخیره و زمان‌بندی شد.'
+              : 'آلارم ذخیره شد؛ در این دستگاه فقط هنگام باز بودن برنامه بررسی می‌شود.',
+        );
+      }
     } catch (_) {
+      if (inserted) {
+        await (db.delete(db.alarms)..where((r) => r.id.equals(id))).go();
+      }
+      await PlatformServices.cancelAlarm(id);
       if (mounted) {
         _toolNotice(
           context,
@@ -1098,32 +1134,14 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
     _prompting = true;
     final input = TextEditingController();
     final seed = DateTime.now().microsecondsSinceEpoch;
-    final a = seed % 7 + 3, b = seed % 5 + 2;
-    var question = '$a × $b = ؟', answer = a * b;
     final level = _easyOnly() ? 'آسان' : alarm.challengeLevel;
-    if (level == 'آسان' && seed.isEven) {
-      question = '${a * b} ÷ $b = ؟';
-      answer = a;
-    }
-    if (level == 'متوسط') {
-      if (seed.isEven) {
-        question =
-            'x² − ${a + b + a}x + ${a * (a + b)} = 0\nریشهٔ کوچک‌تر را بنویس.';
-        answer = a;
-      } else {
-        question = 'x³ = ${a * a * a}\nx = ؟';
-        answer = a;
-      }
-    }
-    if (level == 'سخت') {
-      question = seed.isEven
-          ? '100 × sin(30°) + √${a * a} = ؟'
-          : '100 × cos(60°) + √${a * a} = ؟';
-      answer = 50 + a;
-    }
+    final challenge = createAlarmChallenge(level, seed);
+    final question = challenge.question;
+    final answer = challenge.answer;
     var failures = alarm.wrongAttempts;
     var cooldown = 0;
     String? error;
+    String? playbackError;
     StateSetter? updateDialog;
     Future<void> ring() async {
       try {
@@ -1131,11 +1149,30 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       } catch (_) {}
     }
 
-    await ring();
-    final soundLoop = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => ring(),
-    );
+    if (test && PlatformServices.supportsBackgroundAlarms) {
+      if (!await PlatformServices.startAlarmPreview(alarm.id)) {
+        playbackError =
+            'پیش‌نمایش صدا شروع نشد؛ اگر زنگی در حال پخش است، اول آن را حل کن.';
+      }
+    } else if (!PlatformServices.supportsBackgroundAlarms) {
+      await ring();
+    } else {
+      playbackError = await PlatformServices.pendingAlarmError();
+    }
+    final soundLoop = PlatformServices.supportsBackgroundAlarms
+        ? null
+        : Timer.periodic(const Duration(seconds: 30), (_) => ring());
+    final playbackCheck = PlatformServices.supportsBackgroundAlarms
+        ? Timer.periodic(const Duration(seconds: 2), (_) async {
+            final message = await PlatformServices.pendingAlarmError();
+            if (message != null &&
+                message.isNotEmpty &&
+                message != playbackError) {
+              playbackError = message;
+              if (mounted) updateDialog?.call(() {});
+            }
+          })
+        : null;
     final cooldownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (cooldown > 0) updateDialog?.call(() => cooldown--);
     });
@@ -1173,6 +1210,17 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
+                      if (playbackError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'صدای زنگ: $playbackError',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: AppColors.red,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                       if (level == 'آسان')
                         const Text(
                           'راهنما: ضرب یعنی جمع چندباره؛ تقسیم، عکس ضرب است.',
@@ -1241,7 +1289,9 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       );
     } finally {
       updateDialog = null;
-      soundLoop.cancel();
+      soundLoop?.cancel();
+      playbackCheck?.cancel();
+      if (test) await PlatformServices.stopAlarmPreview(alarm.id);
       cooldownTicker.cancel();
       Future<void>.delayed(const Duration(milliseconds: 350), input.dispose);
       _prompting = false;
@@ -1257,6 +1307,174 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
           context,
           test ? 'آزمایش موفق بود.' : 'آفرین! زنگ خاموش شد.',
         );
+      }
+    }
+  }
+
+  String _alarmDurationLabel(int milliseconds) {
+    final seconds = (milliseconds / 1000).floor().clamp(0, 1 << 31);
+    final minutes = seconds ~/ 60;
+    final remainder = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _pickAlarmSound(Alarm alarm, {required bool record}) async {
+    if (!PlatformServices.supportsBackgroundAlarms) {
+      _toolNotice(context, 'انتخاب و ضبط صدای زنگ در اندروید در دسترس است.');
+      return;
+    }
+    try {
+      final sound = await PlatformServices.pickAlarmSound(
+        alarm.id,
+        record: record,
+      );
+      if (sound == null || !mounted) {
+        if (mounted) {
+          _toolNotice(
+            context,
+            'صدایی انتخاب نشد؛ برنامهٔ فایل یا ضبط صدای دستگاه را بررسی کن.',
+          );
+        }
+        return;
+      }
+      final duration = await PlatformServices.alarmSoundDuration(alarm.id);
+      if (duration == null || duration <= 0) {
+        await PlatformServices.resetAlarmSound(alarm.id);
+        if (mounted) {
+          _toolNotice(
+            context,
+            'مدت فایل خوانده نشد؛ فایل صوتی دیگری انتخاب کن.',
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
+      final maxStartSeconds = ((duration - 30000).clamp(0, duration) ~/ 1000);
+      var startSeconds = 0;
+      String? previewStatus;
+      final selectedStart = await showDialog<int>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, update) => AlertDialog(
+            title: const Text('بازهٔ ۳۰ثانیه‌ای صدای زنگ'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('مدت فایل: ${_alarmDurationLabel(duration)}'),
+                  const SizedBox(height: 10),
+                  Text(
+                    maxStartSeconds == 0
+                        ? 'این فایل کوتاه‌تر از ۳۰ ثانیه است و کامل تکرار می‌شود.'
+                        : 'شروع پخش: ${_alarmDurationLabel(startSeconds * 1000)} تا ${_alarmDurationLabel((startSeconds + 30) * 1000)}',
+                    textAlign: TextAlign.center,
+                  ),
+                  Slider(
+                    key: const Key('alarm-clip-start'),
+                    value: startSeconds.toDouble(),
+                    min: 0,
+                    max: maxStartSeconds.toDouble(),
+                    divisions: maxStartSeconds > 0 ? maxStartSeconds : null,
+                    label: _alarmDurationLabel(startSeconds * 1000),
+                    onChanged: maxStartSeconds == 0
+                        ? null
+                        : (value) => update(() => startSeconds = value.round()),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final saved = await PlatformServices.setAlarmSoundStart(
+                        alarm.id,
+                        startSeconds * 1000,
+                      );
+                      if (!dialogContext.mounted) return;
+                      if (!saved) {
+                        update(
+                          () => previewStatus = 'ذخیرهٔ نقطهٔ شروع ممکن نشد.',
+                        );
+                        return;
+                      }
+                      final started = await PlatformServices.startAlarmPreview(
+                        alarm.id,
+                      );
+                      if (!dialogContext.mounted) {
+                        await PlatformServices.stopAlarmPreview(alarm.id);
+                        return;
+                      }
+                      if (!started) {
+                        update(
+                          () => previewStatus =
+                              'پیش‌نمایش شروع نشد؛ اگر زنگی فعال است، اول آن را حل کن.',
+                        );
+                        return;
+                      }
+                      update(
+                        () =>
+                            previewStatus = 'پیش‌نمایش تا ۳۰ ثانیه پخش می‌شود.',
+                      );
+                      await Future<void>.delayed(
+                        const Duration(milliseconds: 500),
+                      );
+                      final error = await PlatformServices.pendingAlarmError();
+                      if (!dialogContext.mounted) return;
+                      if (error != null && error.isNotEmpty) {
+                        update(
+                          () => previewStatus = 'پخش صدا ناموفق بود: $error',
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('پیش‌نمایش این بازه'),
+                  ),
+                  if (previewStatus != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      previewStatus!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color:
+                            previewStatus!.contains('ناموفق') ||
+                                previewStatus!.contains('نشد')
+                            ? AppColors.red
+                            : AppColors.muted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('انصراف'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, startSeconds),
+                child: const Text('ذخیرهٔ بازه'),
+              ),
+            ],
+          ),
+        ),
+      );
+      await PlatformServices.stopAlarmPreview(alarm.id);
+      if (selectedStart == null || !mounted) return;
+      final saved = await PlatformServices.setAlarmSoundStart(
+        alarm.id,
+        selectedStart * 1000,
+      );
+      if (mounted) {
+        _toolNotice(
+          context,
+          saved
+              ? 'بازهٔ ${_alarmDurationLabel(selectedStart * 1000)} تا ${_alarmDurationLabel((selectedStart + 30) * 1000)} ذخیره شد.'
+              : 'ذخیرهٔ بازهٔ صدا ممکن نشد؛ فایل را دوباره انتخاب کن.',
+        );
+      }
+    } catch (_) {
+      await PlatformServices.stopAlarmPreview(alarm.id);
+      if (mounted) {
+        _toolNotice(context, 'فایل صدا آماده نشد؛ فایل دیگری را امتحان کن.');
       }
     }
   }
@@ -1372,6 +1590,9 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
                                 ],
                                 onSelected: (value) async {
                                   if (value == 'reset') {
+                                    await PlatformServices.stopAlarmPreview(
+                                      alarm.id,
+                                    );
                                     await PlatformServices.resetAlarmSound(
                                       alarm.id,
                                     );
@@ -1383,27 +1604,10 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
                                     }
                                     return;
                                   }
-                                  if (!PlatformServices
-                                      .supportsBackgroundAlarms) {
-                                    _toolNotice(
-                                      context,
-                                      'انتخاب و ضبط صدای زنگ در اندروید در دسترس است.',
-                                    );
-                                    return;
-                                  }
-                                  final sound =
-                                      await PlatformServices.pickAlarmSound(
-                                        alarm.id,
-                                        record: value == 'record',
-                                      );
-                                  if (context.mounted) {
-                                    _toolNotice(
-                                      context,
-                                      sound == null
-                                          ? 'صدایی انتخاب نشد؛ وجود برنامهٔ ضبط صدا و مجوزها را بررسی کن.'
-                                          : 'صدای زنگ ذخیره شد؛ ۳۰ ثانیهٔ اول تکرار می‌شود.',
-                                    );
-                                  }
+                                  await _pickAlarmSound(
+                                    alarm,
+                                    record: value == 'record',
+                                  );
                                 },
                               ),
                               IconButton(

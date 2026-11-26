@@ -9,17 +9,28 @@ import 'package:rahyar/data/repositories/providers.dart';
 import 'package:rahyar/features/feature_pages.dart';
 import 'package:rahyar/main.dart';
 
-Future<void> mountApp(WidgetTester tester, Size size) async {
+Future<void> mountApp(
+  WidgetTester tester,
+  Size size, {
+  bool english = false,
+  double textScaleFactor = 1,
+}) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  tester.platformDispatcher.textScaleFactorTestValue = textScaleFactor;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
   final database = AppDatabase(NativeDatabase.memory());
   await tester.runAsync(() => database.select(database.appPreferences).get());
+  await tester.runAsync(() => database.savePreference('profile.grade', '10'));
   addTearDown(() => tester.runAsync(database.close));
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [databaseProvider.overrideWith((ref) => database)],
+      overrides: [
+        databaseProvider.overrideWith((ref) => database),
+        languageProvider.overrideWith((ref) => english),
+      ],
       child: const RahyarApp(),
     ),
   );
@@ -78,6 +89,32 @@ void main() {
       await tester.pumpAndSettle();
     });
   }
+
+  testWidgets(
+    'compact English navigation and tools fit at 320px with large text',
+    (tester) async {
+      await mountApp(
+        tester,
+        const Size(320, 800),
+        english: true,
+        textScaleFactor: 1.5,
+      );
+
+      expect(find.byTooltip('Community'), findsOneWidget);
+      await tester.tap(find.byTooltip('Community'));
+      await pumpData(tester);
+      expect(find.byType(CommunityPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byTooltip('More'));
+      await pumpData(tester);
+      expect(find.text('Statistics dashboard'), findsOneWidget);
+      expect(find.text('University rankings'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('all sixteen More cards open their own route on a phone', (
     tester,

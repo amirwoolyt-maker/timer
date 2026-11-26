@@ -98,6 +98,11 @@ class _AppShellState extends ConsumerState<AppShell>
               preference.value == 'true';
         }
       }
+      if (!saved.any((preference) => preference.key == 'profile.grade')) {
+        final grade = await _selectEducationGrade();
+        if (grade == null || !mounted) return;
+        await db.savePreference('profile.grade', grade);
+      }
       final alarms = await db.select(db.alarms).get();
       for (final alarm in alarms.where((alarm) => alarm.enabled)) {
         await PlatformServices.scheduleAlarm(
@@ -121,6 +126,63 @@ class _AppShellState extends ConsumerState<AppShell>
     } catch (error) {
       if (mounted) setState(() => storageError = '$error');
     }
+  }
+
+  Future<String?> _selectEducationGrade() {
+    String? selected;
+    final english = ref.read(languageProvider);
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: Text(
+            english ? 'Set your study level' : 'پایهٔ تحصیلی‌ات را انتخاب کن',
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                english
+                    ? 'We use this to choose suitable math alarm challenges. You can edit it later in Profile.'
+                    : 'برای انتخاب سؤال مناسب آلارم ریاضی است. هر وقت بخواهی از پروفایل می‌توانی تغییرش بدهی.',
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: selected,
+                hint: Text(english ? 'Choose a level' : 'انتخاب پایه'),
+                items: educationGrades.entries
+                    .map(
+                      (entry) => DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(
+                          english
+                              ? (entry.key == 'elementary'
+                                    ? 'Elementary (grades 1–6)'
+                                    : entry.key == 'student'
+                                    ? 'University'
+                                    : 'Grade ${entry.key}')
+                              : entry.value,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => update(() => selected = value),
+              ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: selected == null
+                  ? null
+                  : () => Navigator.pop(dialogContext, selected),
+              child: Text(english ? 'Continue' : 'ادامه'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _navigate({AppTab? tab, String? destination}) async {

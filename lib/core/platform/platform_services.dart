@@ -37,9 +37,17 @@ abstract final class PlatformServices {
       false;
   static Future<void> cancelAlarm(String id) async =>
       _invoke<void>('cancelAlarm', {'id': id});
+  static Future<void> unscheduleAlarm(String id) async =>
+      _invoke<void>('unscheduleAlarm', {'id': id});
   static Future<String?> pendingAlarmId() => _invoke<String>('pendingAlarmId');
+  static Future<String?> pendingAlarmError() =>
+      _invoke<String>('pendingAlarmError');
   static Future<void> stopAlarm(String id) async =>
       _invoke<void>('stopAlarm', {'id': id});
+  static Future<bool> startAlarmPreview(String id) async =>
+      await _invoke<bool>('startAlarmPreview', {'id': id}) ?? false;
+  static Future<void> stopAlarmPreview(String id) async =>
+      _invoke<void>('stopAlarmPreview', {'id': id});
   static Future<bool> requestAlarmPermissions() async =>
       await _invoke<bool>('requestAlarmPermissions') ?? false;
   static Future<bool> setFocusMode(bool enabled) async =>
@@ -52,6 +60,14 @@ abstract final class PlatformServices {
   }) => _invoke<String>('pickAlarmSound', {'id': alarmId, 'record': record});
   static Future<void> resetAlarmSound(String id) async =>
       _invoke<void>('resetAlarmSound', {'id': id});
+  static Future<int?> alarmSoundDuration(String id) =>
+      _invoke<int>('alarmSoundDuration', {'id': id});
+  static Future<bool> setAlarmSoundStart(String id, int milliseconds) async =>
+      await _invoke<bool>('setAlarmSoundStart', {
+        'id': id,
+        'milliseconds': milliseconds,
+      }) ??
+      false;
   static Future<bool> scheduleTask(
     String id,
     String title,

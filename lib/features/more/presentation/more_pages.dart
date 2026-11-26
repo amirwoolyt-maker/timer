@@ -927,6 +927,7 @@ class AlarmsPage extends ConsumerStatefulWidget {
 
 class _AlarmsPageState extends ConsumerState<AlarmsPage> {
   Timer? _alarmTimer;
+  Timer? _challengeSoundLoop, _challengePlaybackCheck, _challengeCooldownTicker;
   bool _prompting = false, _checking = false;
   final Set<String> _handled = {};
   @override
@@ -942,6 +943,9 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
   @override
   void dispose() {
     _alarmTimer?.cancel();
+    _challengeSoundLoop?.cancel();
+    _challengePlaybackCheck?.cancel();
+    _challengeCooldownTicker?.cancel();
     super.dispose();
   }
 
@@ -1226,6 +1230,7 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
     final soundLoop = PlatformServices.supportsBackgroundAlarms
         ? null
         : Timer.periodic(const Duration(seconds: 30), (_) => ring());
+    _challengeSoundLoop = soundLoop;
     final playbackCheck = PlatformServices.supportsBackgroundAlarms
         ? Timer.periodic(const Duration(seconds: 2), (_) async {
             final message = await PlatformServices.pendingAlarmError();
@@ -1237,9 +1242,11 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
             }
           })
         : null;
+    _challengePlaybackCheck = playbackCheck;
     final cooldownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (cooldown > 0) updateDialog?.call(() => cooldown--);
     });
+    _challengeCooldownTicker = cooldownTicker;
     bool? solved;
     try {
       if (!mounted) return;

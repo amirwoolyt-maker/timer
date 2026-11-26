@@ -11,6 +11,11 @@ const educationGrades = <String, String>{
   'student': 'دانشجو',
 };
 
+String profileGenderKey(WidgetRef ref) {
+  final userId = ref.read(cloudUserProvider).asData?.value?.id;
+  return userId == null ? 'profile.gender' : 'profile.gender:$userId';
+}
+
 String profilePreference(WidgetRef ref, String key, [String fallback = '']) {
   final values =
       ref.watch(preferencesProvider).asData?.value ?? <AppPreference>[];
@@ -32,6 +37,7 @@ class ProfilePage extends ConsumerWidget {
     );
     final grade = profilePreference(ref, 'profile.grade');
     final subject = profilePreference(ref, 'profile.subject');
+    final gender = profilePreference(ref, profileGenderKey(ref));
     return PageFrame(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -98,6 +104,20 @@ class ProfilePage extends ConsumerWidget {
                                   : 'Grade $grade')
                             : educationGrades[grade] ?? grade,
                       if (subject.isNotEmpty) subject,
+                      if (gender.isNotEmpty)
+                        english
+                            ? {
+                                    'female': 'Female',
+                                    'male': 'Male',
+                                    'unspecified': 'Prefer not to say',
+                                  }[gender] ??
+                                  ''
+                            : {
+                                    'female': 'دختر / زن',
+                                    'male': 'پسر / مرد',
+                                    'unspecified': 'جنسیت: اعلام‌نشده',
+                                  }[gender] ??
+                                  '',
                     ].join(' · '),
                     style: const TextStyle(color: AppColors.muted),
                   ),
@@ -227,6 +247,8 @@ class ProfilePage extends ConsumerWidget {
     };
     final name = TextEditingController(text: values['profile.name']);
     final subject = TextEditingController(text: values['profile.subject']);
+    final genderKey = profileGenderKey(ref);
+    var gender = values[genderKey] ?? 'unspecified';
     var grade = educationGrades.containsKey(values['profile.grade'])
         ? values['profile.grade']!
         : '12';
@@ -251,6 +273,32 @@ class ProfilePage extends ConsumerWidget {
                     validator: (v) => (v?.trim().isEmpty ?? true)
                         ? (english ? 'Enter your name' : 'نامت را وارد کن')
                         : null,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    key: const Key('profile-gender'),
+                    isExpanded: true,
+                    initialValue: gender,
+                    decoration: InputDecoration(
+                      labelText: english ? 'Gender' : 'جنسیت',
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: 'female',
+                        child: Text(english ? 'Female' : 'دختر / زن'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'male',
+                        child: Text(english ? 'Male' : 'پسر / مرد'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'unspecified',
+                        child: Text(
+                          english ? 'Prefer not to say' : 'ترجیح می‌دهم نگویم',
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) => update(() => gender = value!),
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
@@ -312,6 +360,7 @@ class ProfilePage extends ConsumerWidget {
         await db.savePreference('profile.name', name.text.trim());
         await db.savePreference('profile.grade', grade);
         await db.savePreference('profile.subject', subject.text.trim());
+        await db.savePreference(genderKey, gender);
       });
     }
   }

@@ -84,6 +84,7 @@ class _AccountPageState extends ConsumerState<AccountPage> {
       if (!mounted) return;
       _timer?.cancel();
       _code.clear();
+      Navigator.of(context).popUntil((route) => route.isFirst);
       ref.invalidate(cloudUserProvider);
     } catch (error) {
       if (mounted) setState(() => _error = onlineError(error));
@@ -93,8 +94,9 @@ class _AccountPageState extends ConsumerState<AccountPage> {
   }
 
   Future<void> _accountAction(
-    Future<void> Function(OnlineBackend) action,
-  ) async {
+    Future<void> Function(OnlineBackend) action, {
+    bool returnToRoot = false,
+  }) async {
     if (_busy) return;
     setState(() {
       _busy = true;
@@ -104,7 +106,11 @@ class _AccountPageState extends ConsumerState<AccountPage> {
     try {
       await action(ref.read(onlineBackendProvider)!);
       if (!mounted) return;
+      if (returnToRoot) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
       ref.invalidate(cloudUserProvider);
+      if (!mounted) return;
       setState(() {
         _notice = 'انجام شد.';
         _challenge = null;
@@ -117,220 +123,456 @@ class _AccountPageState extends ConsumerState<AccountPage> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (ref.watch(onlineBackendProvider) == null) {
-      return const OnlineSetupNotice();
-    }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 40),
-      child: ref
-          .watch(cloudUserProvider)
-          .when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Column(
-              children: [
-                Text(onlineError(error)),
-                TextButton(
-                  onPressed: () => ref.invalidate(cloudUserProvider),
-                  child: const Text('تلاش دوباره'),
-                ),
-              ],
+  Widget _feedback() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      if (_busy)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: LinearProgressIndicator(),
+        ),
+      if (_notice != null && !_busy)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text(
+            _notice!,
+            style: const TextStyle(color: AppColors.emerald, height: 1.7),
+          ),
+        ),
+      if (_error != null)
+        Semantics(
+          liveRegion: true,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              _error!,
+              style: const TextStyle(color: AppColors.red, height: 1.7),
             ),
-            data: (user) {
-              if (user != null && _editingUser != user.id) {
-                _editingUser = user.id;
-                _name.text = user.name;
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          ),
+        ),
+    ],
+  );
+
+  Widget _login(BuildContext context) {
+    final verifying = _challenge != null;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 30),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.emerald.withValues(alpha: .14),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 27,
+                  color: AppColors.emerald,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'راهیار',
+                style: TextStyle(fontSize: 27, fontWeight: FontWeight.w800),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'برای روزهایی که می‌خواهی جلوتر بروی',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, height: 1.8),
+          ),
+          const SizedBox(height: 28),
+          Center(
+            child: SizedBox(
+              width: 124,
+              height: 124,
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF123D38), Color(0xFF15203E)],
-                      ),
-                      borderRadius: BorderRadius.circular(24),
+                      shape: BoxShape.circle,
                       border: Border.all(
-                        color: AppColors.emerald.withValues(alpha: .35),
+                        color: AppColors.emerald.withValues(alpha: .14),
                       ),
-                    ),
-                    child: Column(
-                      children: [
-                        const Icon(
-                          Icons.mark_email_read_outlined,
-                          color: Color(0xFF80E5C2),
-                          size: 46,
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          user == null
-                              ? 'یک ایمیل تا همراه‌شدن'
-                              : 'حساب آنلاین تو',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'ورود امن با کد یک‌بارمصرف؛ بدون رمز عبور',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Color(0xFFC2DDD7),
-                            height: 1.8,
-                          ),
-                        ),
-                      ],
                     ),
                   ),
-                  const SizedBox(height: 22),
-                  if (user == null) ...[
+                  Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [
+                          AppColors.emerald.withValues(alpha: .25),
+                          const Color(0xFF7066D9).withValues(alpha: .16),
+                        ],
+                      ),
+                      border: Border.all(
+                        color: AppColors.emerald.withValues(alpha: .3),
+                      ),
+                    ),
+                    child: Icon(
+                      verifying
+                          ? Icons.mark_email_read_outlined
+                            : Icons.alternate_email_rounded,
+                      size: 47,
+                      color: dark
+                          ? const Color(0xFF99F4D0)
+                          : AppColors.emeraldDark,
+                    ),
+                  ),
+                  Positioned(
+                    left: 2,
+                    top: 12,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Theme.of(context).colorScheme.surface,
+                        border: Border.all(
+                          color: AppColors.emerald.withValues(alpha: .25),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.star_rounded,
+                        color: AppColors.amber,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 26),
+          AnimatedSize(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 220),
+            alignment: Alignment.topCenter,
+            child: Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.surface.withValues(alpha: .94),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: AppColors.emerald.withValues(alpha: .22),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.emerald.withValues(alpha: .04),
+                    blurRadius: 32,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.emerald,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Container(
+                        width: 28,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: verifying
+                              ? AppColors.emerald
+                              : AppColors.emerald.withValues(alpha: .18),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          verifying
+                              ? '۲ از ۲ • تأیید ایمیل'
+                              : '۱ از ۲ • ورود / ساخت حساب',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.muted,
+                          ),
+                          textAlign: TextAlign.end,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 19),
+                  Text(
+                    verifying ? 'ایمیلت را بررسی کن' : 'به راهیار خوش آمدی',
+                    style: const TextStyle(
+                      fontSize: 23,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    verifying
+                        ? 'کد شش‌رقمی را وارد کن تا مستقیم وارد برنامه شوی.'
+                        : 'ایمیلت را بنویس؛ یک کد ورود برایت می‌فرستیم. رمز عبور لازم نیست.',
+                    style: const TextStyle(height: 1.9, fontSize: 12),
+                  ),
+                  const SizedBox(height: 21),
+                  if (!verifying) ...[
                     TextField(
                       key: const Key('account-email'),
                       controller: _email,
-                      enabled: !_busy && _challenge == null,
+                      enabled: !_busy,
                       textDirection: TextDirection.ltr,
                       keyboardType: TextInputType.emailAddress,
                       autofillHints: const [AutofillHints.email],
+                      onSubmitted: (_) => _send(),
                       decoration: const InputDecoration(
-                        labelText: 'ایمیل',
+                        labelText: 'آدرس ایمیل',
                         hintText: 'you@example.com',
-                        prefixIcon: Icon(Icons.alternate_email),
+                        prefixIcon: Icon(Icons.alternate_email_rounded),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    if (_challenge != null) ...[
-                      TextField(
-                        key: const Key('account-code'),
-                        controller: _code,
-                        enabled: !_busy,
-                        textDirection: TextDirection.ltr,
-                        keyboardType: TextInputType.number,
-                        maxLength: 6,
-                        autofillHints: const [AutofillHints.oneTimeCode],
-                        onSubmitted: (_) => _verify(),
-                        decoration: const InputDecoration(
-                          labelText: 'کد شش‌رقمی',
-                          prefixIcon: Icon(Icons.password_rounded),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      key: const Key('account-send'),
+                      onPressed: _busy || _remaining > 0 ? null : _send,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(50),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
                         ),
                       ),
-                      if (_challenge!.phrase.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: SelectableText(
-                            'عبارت امنیتی این درخواست: ${_challenge!.phrase}\nاین عبارت باید در ایمیل هم یکسان باشد.',
-                            textAlign: TextAlign.center,
-                          ),
+                      icon: const Icon(Icons.arrow_back_rounded, size: 20),
+                      label: Text(
+                        _remaining > 0
+                            ? 'ارسال دوباره پس از $_remaining ثانیه'
+                            : 'دریافت کد ورود',
+                      ),
+                    ),
+                  ] else ...[
+                    SelectableText(
+                      normalizeEmail(_email.text),
+                      textAlign: TextAlign.center,
+                      textDirection: TextDirection.ltr,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      key: const Key('account-code'),
+                      controller: _code,
+                      enabled: !_busy,
+                      textAlign: TextAlign.center,
+                      textDirection: TextDirection.ltr,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      autofocus: true,
+                      style: const TextStyle(
+                        fontSize: 25,
+                        letterSpacing: 7,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      autofillHints: const [AutofillHints.oneTimeCode],
+                      onSubmitted: (_) => _verify(),
+                      decoration: const InputDecoration(
+                        labelText: 'کد شش‌رقمی',
+                        hintText: '------',
+                        counterText: '',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      key: const Key('account-verify'),
+                      onPressed: _busy ? null : _verify,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(50),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
                         ),
-                      FilledButton(
-                        key: const Key('account-verify'),
-                        onPressed: _busy ? null : _verify,
-                        child: const Text('تأیید و ورود'),
                       ),
-                      TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () => setState(() {
-                                _challenge = null;
-                                _code.clear();
-                                _error = null;
-                              }),
-                        child: const Text('اصلاح ایمیل'),
-                      ),
-                    ],
+                      child: const Text('تأیید و ورود به راهیار'),
+                    ),
+                    const SizedBox(height: 8),
                     OutlinedButton(
                       key: const Key('account-send'),
                       onPressed: _busy || _remaining > 0 ? null : _send,
                       child: Text(
                         _remaining > 0
                             ? 'ارسال دوباره پس از $_remaining ثانیه'
-                            : _challenge == null
-                            ? 'دریافت کد ورود'
                             : 'ارسال دوبارهٔ کد',
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'با تأیید اولین کد، حسابت ساخته می‌شود. فقط اطلاعاتی که خودت در بخش آنلاین منتشر کنی با کاربران واردشده به اشتراک گذاشته می‌شود. کارها و یادداشت‌های شخصی فعلاً روی همین دستگاه می‌مانند.',
-                      style: TextStyle(height: 1.9, fontSize: 12),
-                    ),
-                  ] else ...[
-                    SelectableText(
-                      user.email,
-                      textDirection: TextDirection.ltr,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      key: const Key('account-name'),
-                      controller: _name,
-                      maxLength: 60,
-                      decoration: const InputDecoration(
-                        labelText: 'نام نمایشی عمومی',
-                      ),
-                    ),
-                    FilledButton(
+                    TextButton(
                       onPressed: _busy
                           ? null
-                          : () {
-                              if (_name.text.trim().isEmpty) {
-                                setState(
-                                  () => _error = 'نام نمایشی را وارد کن.',
-                                );
-                                return;
-                              }
-                              _accountAction((backend) async {
-                                await backend.updateName(_name.text);
-                              });
-                            },
-                      child: const Text('ذخیرهٔ نام نمایشی'),
+                          : () => setState(() {
+                              _challenge = null;
+                              _code.clear();
+                              _error = null;
+                              _notice = null;
+                            }),
+                      child: const Text('اصلاح آدرس ایمیل'),
                     ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'ایمیلت در پست‌ها و چت نمایش داده نمی‌شود. اطلاعات آفلاین این دستگاه با خروج از حساب پاک یا منتقل نمی‌شود.',
-                      style: TextStyle(height: 1.9),
-                    ),
-                    TextButton.icon(
-                      onPressed: _busy
-                          ? null
-                          : () =>
-                                _accountAction((backend) => backend.signOut()),
-                      icon: const Icon(Icons.logout),
-                      label: const Text('خروج از حساب آنلاین'),
-                    ),
-                  ],
-                  if (_busy)
-                    const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: LinearProgressIndicator(),
-                    ),
-                  if (_notice != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Text(
-                        _notice!,
-                        style: const TextStyle(color: AppColors.emerald),
-                      ),
-                    ),
-                  if (_error != null)
-                    Semantics(
-                      liveRegion: true,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Text(
-                          _error!,
-                          style: const TextStyle(color: AppColors.red),
+                    if (_challenge!.phrase.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.emerald.withValues(alpha: .07),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: SelectableText(
+                          'عبارت امنیتی: ${_challenge!.phrase}\nاین عبارت باید در ایمیل هم یکسان باشد.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 11, height: 1.8),
                         ),
                       ),
-                    ),
+                  ],
+                  _feedback(),
                 ],
-              );
-            },
+              ),
+            ),
           ),
+          const SizedBox(height: 20),
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.lock_outline_rounded,
+                color: AppColors.emerald,
+                size: 15,
+              ),
+              SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'بدون رمز عبور • ورود با تأیید ایمیل',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'با اولین تأیید، حسابت ساخته می‌شود. کارها و یادداشت‌های شخصی روی همین دستگاه می‌مانند و خودکار منتشر نمی‌شوند.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11, height: 1.9),
+          ),
+        ],
+      ),
     );
+  }
+
+  Widget _profile(BuildContext context, CloudUser user) {
+    if (_editingUser != user.id) {
+      _editingUser = user.id;
+      _name.text = user.name;
+    }
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Icon(
+            Icons.verified_user_outlined,
+            color: AppColors.emerald,
+            size: 54,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'حساب آنلاین تو',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 24),
+          ),
+          const SizedBox(height: 12),
+          SelectableText(
+            user.email,
+            textDirection: TextDirection.ltr,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          TextField(
+            key: const Key('account-name'),
+            controller: _name,
+            maxLength: 60,
+            decoration: const InputDecoration(labelText: 'نام نمایشی عمومی'),
+          ),
+          FilledButton(
+            onPressed: _busy
+                ? null
+                : () {
+                    if (_name.text.trim().isEmpty) {
+                      setState(() => _error = 'نام نمایشی را وارد کن.');
+                      return;
+                    }
+                    _accountAction((backend) async {
+                      await backend.updateName(_name.text);
+                    });
+                  },
+            child: const Text('ذخیرهٔ نام نمایشی'),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'برای تغییر جنسیت، پایه و رشته به بخش پروفایل برو. ایمیلت در پست‌ها و چت نمایش داده نمی‌شود. خروج از حساب، داده‌های آفلاین این دستگاه را پاک نمی‌کند.',
+            style: TextStyle(height: 1.9, fontSize: 12),
+          ),
+          TextButton.icon(
+            onPressed: _busy
+                ? null
+                : () => _accountAction(
+                    (backend) => backend.signOut(),
+                    returnToRoot: true,
+                  ),
+            icon: const Icon(Icons.logout),
+            label: const Text('خروج از حساب آنلاین'),
+          ),
+          _feedback(),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (ref.watch(onlineBackendProvider) == null) {
+      return const OnlineSetupNotice();
+    }
+    return ref
+        .watch(cloudUserProvider)
+        .when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(onlineError(error), textAlign: TextAlign.center),
+                TextButton(
+                  onPressed: () => ref.invalidate(cloudUserProvider),
+                  child: const Text('تلاش دوباره'),
+                ),
+              ],
+            ),
+          ),
+          data: (user) =>
+              user == null ? _login(context) : _profile(context, user),
+        );
   }
 }
 

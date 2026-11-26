@@ -10,6 +10,8 @@ import 'core/theme/app_theme.dart';
 import 'core/platform/platform_services.dart';
 import 'data/repositories/providers.dart';
 import 'features/feature_pages.dart';
+import 'features/online/account_page.dart';
+import 'data/online/online_backend.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,12 +35,156 @@ class RahyarApp extends ConsumerWidget {
     locale: Locale(ref.watch(languageProvider) ? 'en' : 'fa'),
     supportedLocales: const [Locale('fa'), Locale('en')],
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    home: const AppShell(),
+    home: const SessionGate(),
     builder: (context, child) => Directionality(
       textDirection: ref.watch(languageProvider)
           ? TextDirection.ltr
           : TextDirection.rtl,
       child: child ?? const SizedBox.shrink(),
+    ),
+  );
+}
+
+class SessionGate extends ConsumerStatefulWidget {
+  const SessionGate({super.key});
+  @override
+  ConsumerState<SessionGate> createState() => _SessionGateState();
+}
+
+class _SessionGateState extends ConsumerState<SessionGate>
+    with WidgetsBindingObserver {
+  Timer? _alarmCheck;
+  bool _ringing = false, _checking = false;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (ref.read(onlineBackendProvider) != null &&
+        PlatformServices.supportsBackgroundAlarms) {
+      _alarmCheck = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => _checkAlarm(),
+      );
+      _checkAlarm();
+    }
+  }
+
+  Future<void> _checkAlarm() async {
+    if (_checking) return;
+    _checking = true;
+    try {
+      final ringing = await PlatformServices.pendingAlarmId() != null;
+      if (mounted && ringing != _ringing) {
+        if (ringing) Navigator.of(context).popUntil((route) => route.isFirst);
+        setState(() => _ringing = ringing);
+      }
+    } finally {
+      _checking = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _alarmCheck != null) {
+      _checkAlarm();
+    }
+  }
+
+  @override
+  void dispose() {
+    _alarmCheck?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (ref.watch(onlineBackendProvider) == null) return const AppShell();
+    // A scheduled ringing alarm must remain dismissible even while signed out.
+    if (_ringing) return const Scaffold(body: SafeArea(child: AlarmsPage()));
+    return ref
+        .watch(cloudUserProvider)
+        .when(
+          data: (user) =>
+              user == null ? const AccountLanding() : const AppShell(),
+          loading: () => const AccountLanding(loading: true),
+          error: (_, _) => const AccountLanding(),
+        );
+  }
+}
+
+class AccountLanding extends StatefulWidget {
+  const AccountLanding({this.loading = false, super.key});
+  final bool loading;
+  @override
+  State<AccountLanding> createState() => _AccountLandingState();
+}
+
+class _AccountLandingState extends State<AccountLanding>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _stars = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 8),
+  );
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _stars.stop();
+    } else if (!_stars.isAnimating) {
+      _stars.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _stars.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Stack(
+      children: [
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _stars,
+            builder: (context, _) => CosmicGlow(
+              _stars.value,
+              dark: Theme.of(context).brightness == Brightness.dark,
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 500),
+              child: widget.loading
+                  ? const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.auto_awesome_rounded,
+                          color: AppColors.emerald,
+                          size: 44,
+                        ),
+                        SizedBox(height: 18),
+                        Text(
+                          'راهیار',
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(height: 20),
+                        CircularProgressIndicator(),
+                      ],
+                    )
+                  : const AccountPage(),
+            ),
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -109,10 +255,26 @@ class _AppShellState extends ConsumerState<AppShell>
               preference.value == 'true';
         }
       }
-      if (!saved.any((preference) => preference.key == 'profile.grade')) {
-        final grade = await _selectEducationGrade();
-        if (grade == null || !mounted) return;
-        await db.savePreference('profile.grade', grade);
+      final userId = ref.read(cloudUserProvider).asData?.value?.id;
+      final genderKey = userId == null
+          ? 'profile.gender'
+          : 'profile.gender:$userId';
+      if (!saved.any((preference) => preference.key == 'profile.grade') ||
+          (userId != null && !saved.any((p) => p.key == genderKey))) {
+        final profile = await _selectEducationGrade(
+          askGender: userId != null,
+          initialGrade: saved
+              .where((p) => p.key == 'profile.grade')
+              .firstOrNull
+              ?.value,
+        );
+        if (profile == null || !mounted) return;
+        await db.transaction(() async {
+          await db.savePreference('profile.grade', profile.grade);
+          if (userId != null) {
+            await db.savePreference(genderKey, profile.gender);
+          }
+        });
       }
       final alarms = await db.select(db.alarms).get();
       for (final alarm in alarms.where((alarm) => alarm.enabled)) {
@@ -139,58 +301,116 @@ class _AppShellState extends ConsumerState<AppShell>
     }
   }
 
-  Future<String?> _selectEducationGrade() {
-    String? selected;
+  Future<({String grade, String gender})?> _selectEducationGrade({
+    bool askGender = false,
+    String? initialGrade,
+  }) {
+    String? selected = educationGrades.containsKey(initialGrade)
+        ? initialGrade
+        : null;
+    String? gender;
     final english = ref.read(languageProvider);
-    return showDialog<String>(
+    return showDialog<({String grade, String gender})>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, update) => AlertDialog(
-          title: Text(
-            english ? 'Set your study level' : 'پایهٔ تحصیلی‌ات را انتخاب کن',
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                english
-                    ? 'We use this to choose suitable math alarm challenges. You can edit it later in Profile.'
-                    : 'برای انتخاب سؤال مناسب آلارم ریاضی است. هر وقت بخواهی از پروفایل می‌توانی تغییرش بدهی.',
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: selected,
-                hint: Text(english ? 'Choose a level' : 'انتخاب پایه'),
-                items: educationGrades.entries
-                    .map(
-                      (entry) => DropdownMenuItem(
-                        value: entry.key,
-                        child: Text(
-                          english
-                              ? (entry.key == 'elementary'
-                                    ? 'Elementary (grades 1–6)'
-                                    : entry.key == 'student'
-                                    ? 'University'
-                                    : 'Grade ${entry.key}')
-                              : entry.value,
-                        ),
+        builder: (dialogContext, update) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: Text(
+              askGender
+                  ? (english ? 'Complete your profile' : 'پروفایلت را کامل کن')
+                  : english
+                  ? 'Set your study level'
+                  : 'پایهٔ تحصیلی‌ات را انتخاب کن',
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    english
+                        ? 'We use this to choose suitable math alarm challenges. You can edit it later in Profile.'
+                        : 'برای انتخاب سؤال مناسب آلارم ریاضی است. هر وقت بخواهی از پروفایل می‌توانی تغییرش بدهی.',
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    key: const Key('onboarding-grade'),
+                    isExpanded: true,
+                    initialValue: selected,
+                    hint: Text(english ? 'Choose a level' : 'انتخاب پایه'),
+                    items: educationGrades.entries
+                        .map(
+                          (entry) => DropdownMenuItem(
+                            value: entry.key,
+                            child: Text(
+                              english
+                                  ? (entry.key == 'elementary'
+                                        ? 'Elementary (grades 1–6)'
+                                        : entry.key == 'student'
+                                        ? 'University'
+                                        : 'Grade ${entry.key}')
+                                  : entry.value,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => update(() => selected = value),
+                  ),
+                  if (askGender) ...[
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      key: const Key('onboarding-gender'),
+                      isExpanded: true,
+                      initialValue: gender,
+                      decoration: InputDecoration(
+                        labelText: english ? 'Gender' : 'جنسیت',
                       ),
-                    )
-                    .toList(),
-                onChanged: (value) => update(() => selected = value),
+                      hint: Text(english ? 'Choose an option' : 'انتخاب کن'),
+                      items: [
+                        DropdownMenuItem(
+                          value: 'female',
+                          child: Text(english ? 'Female' : 'دختر / زن'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'male',
+                          child: Text(english ? 'Male' : 'پسر / مرد'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'unspecified',
+                          child: Text(
+                            english
+                                ? 'Prefer not to say'
+                                : 'ترجیح می‌دهم نگویم',
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => update(() => gender = value),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      english
+                          ? 'This choice stays private on this device and can be changed in Profile.'
+                          : 'این انتخاب خصوصی روی همین دستگاه ذخیره می‌شود و از پروفایل قابل تغییر است.',
+                      style: const TextStyle(fontSize: 12, height: 1.8),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: selected == null || (askGender && gender == null)
+                    ? null
+                    : () => Navigator.pop(dialogContext, (
+                        grade: selected!,
+                        gender: gender ?? 'unspecified',
+                      )),
+                child: Text(english ? 'Continue' : 'ادامه'),
               ),
             ],
           ),
-          actions: [
-            FilledButton(
-              onPressed: selected == null
-                  ? null
-                  : () => Navigator.pop(dialogContext, selected),
-              child: Text(english ? 'Continue' : 'ادامه'),
-            ),
-          ],
         ),
       ),
     );

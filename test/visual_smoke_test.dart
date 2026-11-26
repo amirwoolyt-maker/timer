@@ -47,8 +47,16 @@ void main() {
       for (final dark in [true, false]) {
         final db = AppDatabase(NativeDatabase.memory());
         await tester.runAsync(() => db.savePreference('profile.grade', '10'));
+        await tester.runAsync(
+          () => db.savePreference('profile.gender:visual', 'unspecified'),
+        );
         final key = GlobalKey();
-        final backend = FakeOnlineBackend();
+        final backend = FakeOnlineBackend()
+          ..user = const CloudUser(
+            id: 'visual',
+            email: 'test@example.com',
+            name: 'همراه',
+          );
         await tester.pumpWidget(
           RepaintBoundary(
             key: key,
@@ -69,10 +77,13 @@ void main() {
         expect(find.byType(CosmicGlow), findsOneWidget);
         expect(tester.takeException(), isNull);
         await snapshot(tester, key, dark ? 'stars-dark' : 'stars-light');
-        await tester.tap(find.byTooltip('حساب کاربری'));
+        backend.user = null;
+        ProviderScope.containerOf(
+          tester.element(find.byType(AppShell)),
+        ).invalidate(cloudUserProvider);
         await tester.pump(const Duration(milliseconds: 400));
         await tester.pump(const Duration(milliseconds: 400));
-        expect(find.text('یک ایمیل تا همراه‌شدن'), findsOneWidget);
+        expect(find.text('به راهیار خوش آمدی'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await snapshot(tester, key, dark ? 'account-dark' : 'account-light');
         await tester.pumpWidget(const SizedBox.shrink());

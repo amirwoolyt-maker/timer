@@ -17,7 +17,8 @@ RUN flutter pub get
 COPY lib ./lib
 COPY assets ./assets
 COPY web ./web
-RUN flutter build web --release --no-pub --no-web-resources-cdn
+COPY config ./config
+RUN flutter build web --release --no-pub --no-web-resources-cdn --dart-define-from-file=config/appwrite.json
 
 FROM caddy:2-alpine
 ENV APP_ADDRESS=:8080 APP_ROOT=/srv

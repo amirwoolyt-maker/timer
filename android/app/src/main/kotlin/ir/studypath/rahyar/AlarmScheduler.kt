@@ -63,8 +63,18 @@ object AlarmScheduler {
     }
 
     fun clearSound(context: Context, id: String) {
+        finishSoundEdit(context, id, false)
         val prefs = preferences(context)
         val soundName = prefs.getString("sound:$id", null)
+        deleteSoundFile(context, soundName)
+        prefs.edit()
+            .remove("sound:$id")
+            .remove("soundDuration:$id")
+            .remove("soundStart:$id")
+            .apply()
+    }
+
+    private fun deleteSoundFile(context: Context, soundName: String?) {
         if (!soundName.isNullOrBlank()) {
             val uri = Uri.parse(soundName)
             val file = if (uri.scheme == "file") {
@@ -76,11 +86,28 @@ object AlarmScheduler {
                 file.delete()
             }
         }
-        prefs.edit()
-            .remove("sound:$id")
-            .remove("soundDuration:$id")
-            .remove("soundStart:$id")
-            .apply()
+    }
+
+    fun finishSoundEdit(context: Context, id: String, commit: Boolean) {
+        val prefs = preferences(context)
+        if (!prefs.getBoolean("soundEdit:$id", false)) return
+        val current = prefs.getString("sound:$id", null)
+        val previous = prefs.getString("previousSound:$id", null)
+        val editor = prefs.edit()
+        if (commit) {
+            if (previous != current) deleteSoundFile(context, previous)
+        } else {
+            if (current != previous) deleteSoundFile(context, current)
+            if (previous == null) {
+                editor.remove("sound:$id").remove("soundDuration:$id").remove("soundStart:$id")
+            } else {
+                editor.putString("sound:$id", previous)
+                editor.putLong("soundDuration:$id", prefs.getLong("previousDuration:$id", 30_000L))
+                editor.putLong("soundStart:$id", prefs.getLong("previousStart:$id", 0L))
+            }
+        }
+        editor.remove("soundEdit:$id").remove("previousSound:$id")
+            .remove("previousDuration:$id").remove("previousStart:$id").apply()
     }
 
     fun restore(context: Context) {

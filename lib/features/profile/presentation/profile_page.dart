@@ -37,6 +37,34 @@ class ProfilePage extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Card(
+            child: ListTile(
+              leading: const Icon(
+                Icons.cloud_done_outlined,
+                color: AppColors.emerald,
+              ),
+              title: Text(
+                english ? 'Online account' : 'حساب آنلاین و ورود ایمیلی',
+              ),
+              subtitle: Text(
+                english
+                    ? 'Email code • shared community'
+                    : 'کد یک‌بارمصرف ایمیلی • فضای مشترک همراهان',
+              ),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => Scaffold(
+                    appBar: AppBar(
+                      title: Text(english ? 'Account' : 'حساب کاربری'),
+                    ),
+                    body: const AccountPage(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
             child: Padding(
               padding: const EdgeInsets.all(22),
               child: Column(

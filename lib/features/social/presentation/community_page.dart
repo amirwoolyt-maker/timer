@@ -89,6 +89,7 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(onlineConfigProvider).enabled) return const CloudHubPage();
     final english = ref.watch(languageProvider);
     final likes = _toolRecords(ref, 'tools.postLikes');
     final comments = _toolRecords(ref, 'tools.postComments');

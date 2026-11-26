@@ -15,8 +15,12 @@ import '../core/utils/alarm_challenge.dart';
 import '../core/utils/formatters.dart';
 import '../core/utils/study_clock.dart';
 import '../core/platform/platform_services.dart';
+import '../core/platform/task_reminders.dart';
+import '../data/online/online_backend.dart';
 import '../data/local/app_database.dart';
 import '../data/repositories/providers.dart';
+import 'online/account_page.dart';
+import 'online/cloud_hub_page.dart';
 
 part 'tasks/presentation/tasks_page.dart';
 part 'notes/presentation/notes_page.dart';
@@ -24,6 +28,25 @@ part 'timers/presentation/timer_pages.dart';
 part 'social/presentation/community_page.dart';
 part 'more/presentation/more_pages.dart';
 part 'profile/presentation/profile_page.dart';
+
+Future<void> _restoreNote(
+  BuildContext context,
+  WidgetRef ref,
+  String id,
+) async {
+  try {
+    await ref.read(databaseProvider).restoreNote(id);
+  } catch (error) {
+    if (context.mounted) {
+      _toolNotice(
+        context,
+        error is StateError && error.message == 'NOTE_LIMIT'
+            ? 'سقف ۱۵ یادداشت پر است؛ اول یکی را به سطل زباله منتقل کن.'
+            : 'بازیابی انجام نشد؛ دوباره تلاش کن.',
+      );
+    }
+  }
+}
 
 /// Keep dialog controllers alive until the route has finished its exit animation.
 class _DialogControllers extends StatefulWidget {
@@ -51,19 +74,20 @@ const featureTitles = <String, String>{
   'dashboard': 'داشبورد آمار',
   'calendar': 'تقویم جلالی',
   'studyTimer': 'تایمر درس',
-  'league': 'لیگ رقابت',
+  'league': 'مطالعهٔ همراهان',
   'projects': 'پروژه‌ها',
   'studyRoom': 'اتاق مطالعه',
   'templates': 'الگوها',
   'trash': 'سطل زباله',
   'resources': 'منابع درسی',
-  'uniRanking': 'رتبه‌بندی دانشگاه‌ها',
+  'uniRanking': 'شناخت دانشگاه‌ها',
   'chat': 'چت با کنکوری‌ها',
   'focus': 'حالت تمرکز',
   'location': 'یادآور مکان',
   'smartAlarm': 'بیدار شو!',
   'period': 'چرخه پریود',
   'profile': 'پروفایل',
+  'account': 'حساب کاربری',
 };
 
 const featureTitlesEn = <String, String>{
@@ -83,6 +107,7 @@ const featureTitlesEn = <String, String>{
   'smartAlarm': 'Smart alarm',
   'period': 'Cycle tracker',
   'profile': 'Profile',
+  'account': 'Account',
 };
 
 class AppNavigation extends ConsumerWidget {
@@ -131,6 +156,7 @@ class AppNavigation extends ConsumerWidget {
                   onTap: () => onSelect(AppTab.values[index]),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
+                    constraints: const BoxConstraints(minHeight: 50),
                     padding: const EdgeInsets.symmetric(vertical: 7),
                     decoration: BoxDecoration(
                       color: active
@@ -141,10 +167,16 @@ class AppNavigation extends ConsumerWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          icons[index],
-                          size: 21,
-                          color: active ? AppColors.emerald : AppColors.muted,
+                        AnimatedScale(
+                          scale: active ? 1.1 : 1,
+                          duration: MediaQuery.disableAnimationsOf(context)
+                              ? Duration.zero
+                              : const Duration(milliseconds: 180),
+                          child: Icon(
+                            icons[index],
+                            size: 21,
+                            color: active ? AppColors.emerald : AppColors.muted,
+                          ),
                         ),
                         if (!compact) ...[
                           const SizedBox(height: 3),

@@ -64,7 +64,7 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Build self-contained web app
-        run: flutter build web --release --no-pub --no-web-resources-cdn
+        run: flutter build web --release --no-pub --no-web-resources-cdn --dart-define-from-file=config/appwrite.json
 
       - name: Package web app
         env:
@@ -73,12 +73,15 @@ jobs:
           mkdir -p dist
           cd build/web
           zip -r "../../dist/rahyar-web-${APP_VERSION}.zip" .
+          tar -czf "../../dist/rahyar-appwrite-site-${APP_VERSION}.tar.gz" .
 
       - name: Upload web build
         uses: actions/upload-artifact@v4
         with:
           name: web-release
-          path: dist/rahyar-web-${{ steps.version.outputs.version }}.zip
+          path: |
+            dist/rahyar-web-${{ steps.version.outputs.version }}.zip
+            dist/rahyar-appwrite-site-${{ steps.version.outputs.version }}.tar.gz
           if-no-files-found: error
 
   build-and-release:
@@ -142,7 +145,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if ! flutter build apk --release 2>&1 | tee build.log; then
+          if ! flutter build apk --release --dart-define-from-file=config/appwrite.json 2>&1 | tee build.log; then
             echo "## Android build failure" >> "$GITHUB_STEP_SUMMARY"
             echo >> "$GITHUB_STEP_SUMMARY"
             awk '/\* What went wrong:/{show=1} show{print} /\* Try:/{exit}' build.log >> "$GITHUB_STEP_SUMMARY" || true
@@ -189,3 +192,4 @@ jobs:
           files: |
             build/app/outputs/flutter-apk/app-release.apk
             dist/rahyar-web-${{ needs.checks.outputs.version }}.zip
+            dist/rahyar-appwrite-site-${{ needs.checks.outputs.version }}.tar.gz

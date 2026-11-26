@@ -109,7 +109,7 @@ void main() {
       await tester.tap(find.byTooltip('More'));
       await pumpData(tester);
       expect(find.text('Statistics dashboard'), findsOneWidget);
-      expect(find.text('University rankings'), findsOneWidget);
+      expect(find.text('University directory'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();

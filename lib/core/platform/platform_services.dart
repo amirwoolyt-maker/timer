@@ -60,6 +60,15 @@ abstract final class PlatformServices {
   }) => _invoke<String>('pickAlarmSound', {'id': alarmId, 'record': record});
   static Future<void> resetAlarmSound(String id) async =>
       _invoke<void>('resetAlarmSound', {'id': id});
+  static Future<bool> finishAlarmSoundEdit(
+    String id, {
+    required bool commit,
+  }) async =>
+      await _invoke<bool>('finishAlarmSoundEdit', {
+        'id': id,
+        'commit': commit,
+      }) ??
+      false;
   static Future<int?> alarmSoundDuration(String id) =>
       _invoke<int>('alarmSoundDuration', {'id': id});
   static Future<bool> setAlarmSoundStart(String id, int milliseconds) async =>

@@ -6,17 +6,22 @@ class MoreGrid extends ConsumerWidget {
   static const items = [
     ('dashboard', 'داشبورد آمار', 'آمار و پیشرفت', Icons.bar_chart_rounded),
     ('calendar', 'تقویم', 'تقویم جلالی', Icons.calendar_month_rounded),
-    ('studyTimer', 'تایمر درس', 'مطالعه رقابتی', Icons.school_rounded),
-    ('league', 'لیگ رقابت', 'رتبه‌بندی کاربران', Icons.emoji_events_rounded),
+    ('studyTimer', 'تایمر درس', 'ثبت زمان مطالعه', Icons.school_rounded),
+    (
+      'league',
+      'مطالعهٔ همراهان',
+      'پیشرفت و رقابت شخصی',
+      Icons.emoji_events_rounded,
+    ),
     ('projects', 'پروژه‌ها', 'مدیریت پروژه', Icons.folder_copy_rounded),
-    ('studyRoom', 'اتاق مطالعه', 'مطالعه گروهی', Icons.groups_rounded),
+    ('studyRoom', 'اتاق مطالعه', 'فضای مطالعه و گفت‌وگو', Icons.groups_rounded),
     ('templates', 'الگوها', 'قالب کار', Icons.dashboard_customize_rounded),
     ('trash', 'سطل زباله', 'بازیابی آیتم‌ها', Icons.delete_sweep_rounded),
     ('resources', 'منابع درسی', 'سایت‌های آموزشی', Icons.menu_book_rounded),
     (
       'uniRanking',
-      'رتبه‌بندی دانشگاه‌ها',
-      'بهترین دانشگاه‌ها',
+      'شناخت دانشگاه‌ها',
+      'فهرست و علاقه‌مندی‌ها',
       Icons.account_balance_rounded,
     ),
     ('chat', 'چت با کنکوری‌ها', 'چت و گروه', Icons.forum_rounded),
@@ -39,7 +44,7 @@ class MoreGrid extends ConsumerWidget {
       'Templates',
       'Trash',
       'Study resources',
-      'University rankings',
+      'University directory',
       'Exam community',
       'Focus mode',
       'Place reminders',
@@ -50,14 +55,14 @@ class MoreGrid extends ConsumerWidget {
     const englishDescriptions = [
       'Stats and progress',
       'Jalali dates',
-      'Competitive study',
-      'Community ranking',
+      'Record study time',
+      'Study progress',
       'Project planning',
       'Group study',
       'Task templates',
       'Restore deleted items',
       'Learning websites',
-      'Top universities',
+      'Directory and favorites',
       'Chat and groups',
       'Full focus',
       'Location reminders',
@@ -163,25 +168,36 @@ class FeaturePage extends ConsumerWidget {
   const FeaturePage({required this.feature, super.key});
   final String feature;
   @override
-  Widget build(BuildContext context, WidgetRef ref) => switch (feature) {
-    'dashboard' => const DashboardPage(),
-    'calendar' => const JalaliCalendarPage(),
-    'projects' => const ProjectsPage(),
-    'trash' => const TrashPage(),
-    'smartAlarm' => const AlarmsPage(),
-    'focus' => const FocusModePage(),
-    'profile' => const ProfilePage(),
-    'studyTimer' => const StudyTimerPage(),
-    'league' => const LeaguePage(),
-    'studyRoom' => const StudyRoomsPage(),
-    'templates' => const TemplatesPage(),
-    'resources' => const ResourcesPage(),
-    'uniRanking' => const UniversityDirectoryPage(),
-    'chat' => const LocalChatPage(),
-    'location' => const PlaceRemindersPage(),
-    'period' => const CycleTrackerPage(),
-    _ => const SizedBox.shrink(),
-  };
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (ref.watch(onlineConfigProvider).enabled) {
+      final collection = {
+        'league': 'scores',
+        'studyRoom': 'rooms',
+        'chat': 'messages',
+      }[feature];
+      if (collection != null) return CloudHubPage(mode: collection);
+    }
+    return switch (feature) {
+      'dashboard' => const DashboardPage(),
+      'calendar' => const JalaliCalendarPage(),
+      'projects' => const ProjectsPage(),
+      'trash' => const TrashPage(),
+      'smartAlarm' => const AlarmsPage(),
+      'focus' => const FocusModePage(),
+      'profile' => const ProfilePage(),
+      'account' => const AccountPage(),
+      'studyTimer' => const StudyTimerPage(),
+      'league' => const LeaguePage(),
+      'studyRoom' => const StudyRoomsPage(),
+      'templates' => const TemplatesPage(),
+      'resources' => const ResourcesPage(),
+      'uniRanking' => const UniversityDirectoryPage(),
+      'chat' => const LocalChatPage(),
+      'location' => const PlaceRemindersPage(),
+      'period' => const CycleTrackerPage(),
+      _ => const SizedBox.shrink(),
+    };
+  }
 }
 
 final _allStudySessionsProvider = StreamProvider<List<StudySession>>((ref) {
@@ -501,7 +517,7 @@ class _JalaliCalendarPageState extends ConsumerState<JalaliCalendarPage> {
                           style: TextStyle(
                             color: active
                                 ? const Color(0xFF041B12)
-                                : AppColors.text,
+                                : Theme.of(context).colorScheme.onSurface,
                           ),
                         ),
                       ),
@@ -570,17 +586,32 @@ class _JalaliCalendarPageState extends ConsumerState<JalaliCalendarPage> {
     );
     if (values == null || !mounted) return;
     final db = ref.read(databaseProvider);
+    final id = const Uuid().v4();
     await db
         .into(db.tasks)
         .insert(
           TasksCompanion.insert(
-            id: const Uuid().v4(),
+            id: id,
             title: values['title']!,
             description: Value(values['description']!),
             dueAt: Value(selected.toDateTime().add(const Duration(hours: 9))),
             createdAt: DateTime.now(),
           ),
         );
+    final task = await (db.select(
+      db.tasks,
+    )..where((t) => t.id.equals(id))).getSingle();
+    final reminder = await TaskReminders.sync(task, requestPermission: true);
+    if (context.mounted &&
+        {
+          ReminderResult.failed,
+          ReminderResult.permissionDenied,
+        }.contains(reminder)) {
+      _toolNotice(
+        context,
+        'کار ثبت شد، اما مجوز یا زمان‌بندی یادآوری فعال نیست.',
+      );
+    }
   }
 }
 
@@ -717,8 +748,23 @@ class TrashPage extends ConsumerWidget {
                       (item) => _TrashTile(
                         title: item.title,
                         type: 'کار',
-                        onRestore: () =>
-                            ref.read(databaseProvider).restoreTask(item.id),
+                        onRestore: () async {
+                          await ref.read(databaseProvider).restoreTask(item.id);
+                          final result = await TaskReminders.sync(
+                            item.copyWith(deletedAt: const Value(null)),
+                            requestPermission: true,
+                          );
+                          if (context.mounted &&
+                              {
+                                ReminderResult.failed,
+                                ReminderResult.permissionDenied,
+                              }.contains(result)) {
+                            _toolNotice(
+                              context,
+                              'کار بازیابی شد، اما یادآوری فعال نشد.',
+                            );
+                          }
+                        },
                         onDelete: () => ref
                             .read(databaseProvider)
                             .deleteTaskPermanently(item.id),
@@ -738,8 +784,7 @@ class TrashPage extends ConsumerWidget {
                       (item) => _TrashTile(
                         title: item.title,
                         type: 'یادداشت',
-                        onRestore: () =>
-                            ref.read(databaseProvider).restoreNote(item.id),
+                        onRestore: () => _restoreNote(context, ref, item.id),
                         onDelete: () => ref
                             .read(databaseProvider)
                             .deleteNotePermanently(item.id),
@@ -1132,6 +1177,25 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
   Future<void> _challenge(Alarm alarm, {bool test = false}) async {
     if (_prompting || !mounted) return;
     _prompting = true;
+    final cooldownKey = 'alarmCooldown:${alarm.id}';
+    String? cooldownDeadline;
+    try {
+      final db = ref.read(databaseProvider);
+      final preference = await (db.select(
+        db.appPreferences,
+      )..where((p) => p.key.equals(cooldownKey))).getSingleOrNull();
+      cooldownDeadline = preference?.value;
+    } catch (_) {
+      _prompting = false;
+      if (mounted) {
+        _toolNotice(context, 'خواندن وضعیت چالش ممکن نشد؛ دوباره تلاش کن.');
+      }
+      return;
+    }
+    if (!mounted) {
+      _prompting = false;
+      return;
+    }
     final input = TextEditingController();
     final seed = DateTime.now().microsecondsSinceEpoch;
     final level = _easyOnly() ? 'آسان' : alarm.challengeLevel;
@@ -1139,7 +1203,7 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
     final question = challenge.question;
     final answer = challenge.answer;
     var failures = alarm.wrongAttempts;
-    var cooldown = 0;
+    var cooldown = remainingAlarmCooldown(cooldownDeadline, DateTime.now());
     String? error;
     String? playbackError;
     StateSetter? updateDialog;
@@ -1272,11 +1336,32 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
                               if (failures % 6 == 0) cooldown = 30;
                             });
                             final db = ref.read(databaseProvider);
-                            await (db.update(
-                              db.alarms,
-                            )..where((r) => r.id.equals(alarm.id))).write(
-                              AlarmsCompanion(wrongAttempts: Value(failures)),
-                            );
+                            try {
+                              await db.transaction(() async {
+                                await (db.update(
+                                  db.alarms,
+                                )..where((r) => r.id.equals(alarm.id))).write(
+                                  AlarmsCompanion(
+                                    wrongAttempts: Value(failures),
+                                  ),
+                                );
+                                if (failures % 6 == 0) {
+                                  await db.savePreference(
+                                    cooldownKey,
+                                    DateTime.now()
+                                        .add(const Duration(seconds: 30))
+                                        .toIso8601String(),
+                                  );
+                                }
+                              });
+                            } catch (_) {
+                              if (mounted) {
+                                _toolNotice(
+                                  context,
+                                  'ثبت تعداد خطا ممکن نشد؛ چالش همچنان فعال است.',
+                                );
+                              }
+                            }
                           },
                     key: const Key('alarm-answer-submit'),
                     child: const Text('بررسی پاسخ'),
@@ -1298,6 +1383,7 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
     }
     if (solved == true) {
       final db = ref.read(databaseProvider);
+      await db.savePreference(cooldownKey, '');
       await (db.update(db.alarms)..where((r) => r.id.equals(alarm.id))).write(
         const AlarmsCompanion(wrongAttempts: Value(0)),
       );
@@ -1323,11 +1409,14 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       _toolNotice(context, 'انتخاب و ضبط صدای زنگ در اندروید در دسترس است.');
       return;
     }
+    var editingSound = false;
+    var committed = false;
     try {
       final sound = await PlatformServices.pickAlarmSound(
         alarm.id,
         record: record,
       );
+      editingSound = sound != null;
       if (sound == null || !mounted) {
         if (mounted) {
           _toolNotice(
@@ -1339,7 +1428,6 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       }
       final duration = await PlatformServices.alarmSoundDuration(alarm.id);
       if (duration == null || duration <= 0) {
-        await PlatformServices.resetAlarmSound(alarm.id);
         if (mounted) {
           _toolNotice(
             context,
@@ -1463,11 +1551,17 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
         alarm.id,
         selectedStart * 1000,
       );
+      if (saved) {
+        committed = await PlatformServices.finishAlarmSoundEdit(
+          alarm.id,
+          commit: true,
+        );
+      }
       if (mounted) {
         _toolNotice(
           context,
-          saved
-              ? 'بازهٔ ${_alarmDurationLabel(selectedStart * 1000)} تا ${_alarmDurationLabel((selectedStart + 30) * 1000)} ذخیره شد.'
+          committed
+              ? 'بازهٔ ${_alarmDurationLabel(selectedStart * 1000)} تا ${_alarmDurationLabel(((selectedStart + 30) * 1000).clamp(0, duration))} ذخیره شد.'
               : 'ذخیرهٔ بازهٔ صدا ممکن نشد؛ فایل را دوباره انتخاب کن.',
         );
       }
@@ -1475,6 +1569,11 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       await PlatformServices.stopAlarmPreview(alarm.id);
       if (mounted) {
         _toolNotice(context, 'فایل صدا آماده نشد؛ فایل دیگری را امتحان کن.');
+      }
+    } finally {
+      await PlatformServices.stopAlarmPreview(alarm.id);
+      if (editingSound && !committed) {
+        await PlatformServices.finishAlarmSoundEdit(alarm.id, commit: false);
       }
     }
   }

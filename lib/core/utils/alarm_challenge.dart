@@ -6,6 +6,13 @@ class AlarmChallenge {
   final int answer;
 }
 
+int remainingAlarmCooldown(String? deadline, DateTime now) {
+  final until = DateTime.tryParse(deadline ?? '');
+  if (until == null) return 0;
+  final milliseconds = until.difference(now).inMilliseconds;
+  return milliseconds <= 0 ? 0 : ((milliseconds + 999) ~/ 1000).clamp(0, 30);
+}
+
 AlarmChallenge createAlarmChallenge(String level, int seed) {
   final a = seed.abs() % 7 + 3;
   final b = seed.abs() % 5 + 2;

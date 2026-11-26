@@ -185,10 +185,19 @@ class AppDatabase extends _$AppDatabase {
   Future<int> deleteNotePermanently(String id) =>
       (delete(notes)..where((row) => row.id.equals(id))).go();
 
-  Future<int> restoreNote(String id) =>
-      (update(notes)..where((row) => row.id.equals(id))).write(
-        const NotesCompanion(deletedAt: Value(null)),
-      );
+  Future<int> restoreNote(String id) => transaction(() async {
+    final note = await (select(
+      notes,
+    )..where((row) => row.id.equals(id))).getSingleOrNull();
+    if (note == null || note.deletedAt == null) return 0;
+    final active = await (select(
+      notes,
+    )..where((row) => row.deletedAt.isNull())).get();
+    if (active.length >= 15) throw StateError('NOTE_LIMIT');
+    return (update(notes)..where((row) => row.id.equals(id))).write(
+      const NotesCompanion(deletedAt: Value(null)),
+    );
+  });
 
   Future<int> restoreProject(String id) =>
       (update(projects)..where((row) => row.id.equals(id))).write(

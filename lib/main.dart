@@ -1,5 +1,6 @@
 // ignore_for_file: deprecated_member_use
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -56,6 +57,16 @@ class _AppShellState extends ConsumerState<AppShell>
   Timer? alarmMonitor;
   String? storageError;
   bool changingPage = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      glow.stop();
+    } else if (!glow.isAnimating) {
+      glow.repeat(reverse: true);
+    }
+  }
 
   @override
   void initState() {
@@ -316,6 +327,17 @@ class _AppShellState extends ConsumerState<AppShell>
                               ),
                             ),
                             IconButton(
+                              tooltip: ref.watch(languageProvider)
+                                  ? 'Account'
+                                  : 'حساب کاربری',
+                              onPressed: () =>
+                                  _navigate(destination: 'account'),
+                              icon: const Icon(
+                                Icons.person_outline_rounded,
+                                size: 22,
+                              ),
+                            ),
+                            IconButton(
                               onPressed: () => _settings(context),
                               icon: const Icon(Icons.tune_rounded, size: 21),
                             ),
@@ -344,9 +366,25 @@ class _AppShellState extends ConsumerState<AppShell>
                           ],
                         ),
                       Expanded(
-                        child: KeyedSubtree(
-                          key: ValueKey(feature ?? selected.name),
-                          child: page,
+                        child: AnimatedSwitcher(
+                          duration: MediaQuery.disableAnimationsOf(context)
+                              ? Duration.zero
+                              : const Duration(milliseconds: 240),
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: Tween<Offset>(
+                                    begin: const Offset(0, .025),
+                                    end: Offset.zero,
+                                  ).animate(animation),
+                                  child: child,
+                                ),
+                              ),
+                          child: KeyedSubtree(
+                            key: ValueKey(feature ?? selected.name),
+                            child: page,
+                          ),
                         ),
                       ),
                     ],
@@ -461,6 +499,57 @@ class _GlowPainter extends CustomPainter {
               Rect.fromCircle(center: center, radius: size.width * .75),
             ),
     );
+    final lower = Offset(size.width * .12, size.height * .7);
+    canvas.drawCircle(
+      lower,
+      size.width * .65,
+      Paint()
+        ..shader =
+            RadialGradient(
+              colors: [
+                const Color(0xFF6457C9).withValues(alpha: dark ? .10 : .04),
+                Colors.transparent,
+              ],
+            ).createShader(
+              Rect.fromCircle(center: lower, radius: size.width * .65),
+            ),
+    );
+    final random = math.Random(1947);
+    final count = (size.width * size.height / 4000).round().clamp(55, 160);
+    for (var i = 0; i < count; i++) {
+      final point = Offset(
+        random.nextDouble() * size.width,
+        random.nextDouble() * size.height,
+      );
+      final radius = .45 + random.nextDouble() * 1.15;
+      final phase = random.nextDouble() * math.pi * 2;
+      final alpha =
+          (.28 + .38 * (.5 + .5 * math.sin(progress * math.pi * 2 + phase))) *
+          (dark ? 1 : .7);
+      final color = (dark ? const Color(0xFFD5EFE9) : const Color(0xFF426E66))
+          .withValues(alpha: alpha);
+      if (radius > 1.4) {
+        canvas.drawCircle(
+          point,
+          radius * 3,
+          Paint()..color = color.withValues(alpha: alpha * .11),
+        );
+        final sparkle = Paint()
+          ..color = color.withValues(alpha: alpha * .5)
+          ..strokeWidth = .6;
+        canvas.drawLine(
+          point - const Offset(0, 3.5),
+          point + const Offset(0, 3.5),
+          sparkle,
+        );
+        canvas.drawLine(
+          point - const Offset(3.5, 0),
+          point + const Offset(3.5, 0),
+          sparkle,
+        );
+      }
+      canvas.drawCircle(point, radius, Paint()..color = color);
+    }
   }
 
   @override

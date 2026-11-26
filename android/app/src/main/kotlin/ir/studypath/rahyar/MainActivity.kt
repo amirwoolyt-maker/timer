@@ -21,6 +21,9 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        for ((key, _) in AlarmScheduler.preferences(this).all) {
+            if (key.startsWith("soundEdit:")) AlarmScheduler.finishSoundEdit(this, key.removePrefix("soundEdit:"), false)
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "rahyar/platform")
             .setMethodCallHandler { call, result ->
                 try {
@@ -141,6 +144,11 @@ class MainActivity : FlutterActivity() {
                             prefs.edit().putLong("soundStart:$id", requested.coerceIn(0L, maximum)).apply()
                             result.success(duration > 0)
                         }
+                        "finishAlarmSoundEdit" -> {
+                            val id = call.argument<String>("id") ?: error("Missing alarm ID")
+                            AlarmScheduler.finishSoundEdit(this, id, call.argument<Boolean>("commit") == true)
+                            result.success(true)
+                        }
                         "resetAlarmSound" -> {
                             val id = call.argument<String>("id") ?: error("Missing alarm ID")
                             AlarmScheduler.clearSound(this, id)
@@ -252,11 +260,14 @@ class MainActivity : FlutterActivity() {
         if (requestCode != 411) return
         val uri = data?.data
         if (resultCode == Activity.RESULT_OK && uri != null) {
+            var importedFile: File? = null
             try {
                 try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                 catch (_: Exception) { /* Some recorder apps return a temporary content URI. */ }
                 val id = requireNotNull(soundAlarmId)
-                val target = File(filesDir, "alarm-sound-$id.audio")
+                AlarmScheduler.finishSoundEdit(this, id, false)
+                val target = File.createTempFile("alarm-sound-", ".audio", filesDir)
+                importedFile = target
                 contentResolver.openInputStream(uri).use { input ->
                     requireNotNull(input) { "Selected recording could not be opened" }
                     target.outputStream().use { output -> input.copyTo(output) }
@@ -269,7 +280,12 @@ class MainActivity : FlutterActivity() {
                     metadata.release()
                 }
                 if (duration <= 0L) error("Selected audio has no readable duration")
-                AlarmScheduler.preferences(this).edit()
+                val prefs = AlarmScheduler.preferences(this)
+                prefs.edit()
+                    .putBoolean("soundEdit:$id", true)
+                    .putString("previousSound:$id", prefs.getString("sound:$id", null))
+                    .putLong("previousDuration:$id", prefs.getLong("soundDuration:$id", 30_000L))
+                    .putLong("previousStart:$id", prefs.getLong("soundStart:$id", 0L))
                     .putString("sound:$id", Uri.fromFile(target).toString())
                     .putLong("soundDuration:$id", duration)
                     .putLong("soundStart:$id", 0L)
@@ -277,6 +293,7 @@ class MainActivity : FlutterActivity() {
                     .apply()
                 soundResult?.success(target.name)
             } catch (error: Exception) {
+                importedFile?.delete()
                 soundResult?.error("SOUND_IMPORT", error.message ?: "Could not save selected audio", null)
             }
         } else {

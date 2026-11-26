@@ -356,13 +356,25 @@ class _TasksPageState extends ConsumerState<TasksPage> {
     }
   }
 
-  Future<void> _schedule(Task task) async {
-    if (task.dueAt != null && task.dueAt!.isAfter(DateTime.now())) {
-      await PlatformServices.scheduleTask(
-        task.id,
-        task.title,
-        task.dueAt!,
-        body: task.description,
+  Future<void> _schedule(Task task, {bool requestPermission = false}) async {
+    final result = await TaskReminders.sync(
+      task,
+      requestPermission: requestPermission,
+    );
+    if (mounted &&
+        {
+          ReminderResult.failed,
+          ReminderResult.permissionDenied,
+        }.contains(result)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              'کار ذخیره شد، اما یادآوری فعال نشد؛ مجوز اعلان و آلارم را بررسی کن.',
+              'Task saved, but its reminder is off. Check notification and alarm permissions.',
+            ),
+          ),
+        ),
       );
     }
   }
@@ -674,10 +686,7 @@ class _TasksPageState extends ConsumerState<TasksPage> {
         db.tasks,
       )..where((t) => t.id.equals(id))).getSingle();
       if (!savedTask.completed && due != null && due!.isAfter(DateTime.now())) {
-        if (PlatformServices.supportsBackgroundAlarms) {
-          await PlatformServices.requestAlarmPermissions();
-        }
-        await _schedule(savedTask);
+        await _schedule(savedTask, requestPermission: true);
       }
     } catch (_) {
       _error();

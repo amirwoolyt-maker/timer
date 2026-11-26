@@ -186,7 +186,7 @@ class _NotesPageState extends ConsumerState<NotesPage> {
           ),
           action: SnackBarAction(
             label: _tr('بازگردانی', 'Undo'),
-            onPressed: () => ref.read(databaseProvider).restoreNote(note.id),
+            onPressed: () => _restoreNote(context, ref, note.id),
           ),
         ),
       );

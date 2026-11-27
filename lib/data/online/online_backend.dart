@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:appwrite/appwrite.dart';
 import 'package:appwrite/models.dart' as models;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
+import '../repositories/providers.dart';
+import 'user_profile.dart';
+export 'user_profile.dart';
 
 class OnlineConfig {
   const OnlineConfig({
@@ -28,8 +32,16 @@ class OnlineConfig {
 }
 
 class CloudUser {
-  const CloudUser({required this.id, required this.email, required this.name});
+  const CloudUser({
+    required this.id,
+    required this.email,
+    required this.name,
+    this.profile = const UserProfile(),
+    this.isOffline = false,
+  });
   final String id, email, name;
+  final UserProfile profile;
+  final bool isOffline;
   String get displayName => name.trim().isEmpty ? 'همراه راهیار' : name.trim();
 }
 
@@ -66,6 +78,7 @@ abstract class OnlineBackend {
   Future<EmailChallenge> sendCode(String email);
   Future<CloudUser> verifyCode(String userId, String code);
   Future<CloudUser> updateName(String name);
+  Future<CloudUser> updateProfile(UserProfile profile);
   Future<void> signOut();
   Stream<List<CloudEntry>> watch(String collection, {String? parentId});
   Future<void> write(
@@ -86,9 +99,72 @@ final onlineBackendProvider = Provider<OnlineBackend?>((ref) {
   if (!config.enabled) return null;
   return AppwriteBackend(config);
 });
-final cloudUserProvider = FutureProvider<CloudUser?>(
-  (ref) => ref.watch(onlineBackendProvider)?.currentUser(),
-);
+final cloudUserProvider = FutureProvider<CloudUser?>((ref) async {
+  final backend = ref.watch(onlineBackendProvider);
+  if (backend == null) return null;
+  final db = ref.read(databaseProvider);
+  CloudUser? user;
+  try {
+    user = await backend.currentUser();
+  } catch (_) {
+    final preferences = await db.select(db.appPreferences).get();
+    final values = {for (final p in preferences) p.key: p.value};
+    final id = values['account.active'];
+    if (id == null || id.isEmpty) rethrow;
+    final cached = values['account.cache:$id'];
+    if (cached == null) rethrow;
+    try {
+      final data = jsonDecode(cached) as Map<String, dynamic>;
+      return CloudUser(
+        id: id,
+        email: '${data['email'] ?? ''}',
+        name: '${data['name'] ?? ''}',
+        isOffline: true,
+        profile: UserProfile.fromMap(data['profile'] as Map? ?? {}),
+      );
+    } catch (_) {
+      rethrow;
+    }
+  }
+  if (user == null) {
+    try {
+      await db.savePreference('account.active', '');
+    } catch (_) {
+      /* Cache is best effort. */
+    }
+    return null;
+  }
+  final current = user;
+  try {
+    await db.transaction(() async {
+      await db.savePreference('account.active', current.id);
+      await db.savePreference(
+        'account.cache:${current.id}',
+        jsonEncode({
+          'email': current.email,
+          'name': current.name,
+          'profile': current.profile.toMap(),
+        }),
+      );
+      for (final entry in current.profile.toMap().entries) {
+        if (entry.value != null && '${entry.value}'.isNotEmpty) {
+          await db.savePreference(
+            'profile.${entry.key}:${current.id}',
+            '${entry.value}',
+          );
+        }
+      }
+      // These two compatibility keys feed existing local study tools only.
+      if (current.profile.grade.isNotEmpty) {
+        await db.savePreference('profile.grade', current.profile.grade);
+      }
+      await db.savePreference('profile.name', current.displayName);
+    });
+  } catch (_) {
+    /* Online sign-in remains usable if the cache is unavailable. */
+  }
+  return current;
+});
 typedef CloudFeed = ({String collection, String? parentId});
 final cloudFeedProvider = StreamProvider.autoDispose
     .family<List<CloudEntry>, CloudFeed>((ref, feed) {
@@ -155,8 +231,17 @@ class AppwriteBackend implements OnlineBackend {
     'members',
     'scores',
   };
-  CloudUser _user(models.User user) =>
-      CloudUser(id: user.$id, email: user.email, name: user.name);
+  CloudUser _user(models.User user) => CloudUser(
+    id: user.$id,
+    email: user.email,
+    name: user.name,
+    profile: UserProfile.fromMap(
+      user.prefs.data['rahyarProfile'] is Map
+          ? user.prefs.data['rahyarProfile'] as Map
+          : {},
+      name: user.name,
+    ),
+  );
   void _checkCollection(String collection) {
     if (!collections.contains(collection)) {
       throw ArgumentError('Unknown collection');
@@ -198,6 +283,19 @@ class AppwriteBackend implements OnlineBackend {
   @override
   Future<CloudUser> updateName(String name) async =>
       _user(await account.updateName(name: name.trim()));
+  @override
+  Future<CloudUser> updateProfile(UserProfile profile) async {
+    if (!profile.complete) throw ArgumentError('Incomplete profile');
+    final existing = await account.get();
+    // updatePrefs replaces the whole preferences object: preserve other keys.
+    await account.updateName(name: profile.name.trim());
+    return _user(
+      await account.updatePrefs(
+        prefs: {...existing.prefs.data, 'rahyarProfile': profile.toMap()},
+      ),
+    );
+  }
+
   @override
   Future<void> signOut() async {
     for (final subscription in _subscriptions.toList()) {

@@ -1,5 +1,6 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'app_scenes.dart';
 
 abstract final class AppColors {
   static const background = Color(0xFF0A0A0C);
@@ -16,22 +17,30 @@ abstract final class AppColors {
   static const purple = Color(0xFFA78BFA);
 }
 
-ThemeData buildAppTheme({required bool dark}) {
+ThemeData buildAppTheme({
+  required bool dark,
+  AppScene scene = AppScene.cosmic,
+}) {
+  final accent = dark ? scene.accent : scene.lightAccent;
+  final background = scene.background(dark);
+  final surface = scene.surface(dark);
+  final raised = Color.alphaBlend(
+    (dark ? Colors.white : accent).withValues(alpha: dark ? .035 : .025),
+    surface,
+  );
   final scheme = ColorScheme.fromSeed(
-    seedColor: AppColors.emerald,
+    seedColor: accent,
     brightness: dark ? Brightness.dark : Brightness.light,
-    surface: dark ? AppColors.surface : const Color(0xFFFFFFFF),
-    primary: AppColors.emerald,
-    onPrimary: const Color(0xFF041B12),
+    surface: surface,
+    primary: accent,
+    onPrimary: dark ? const Color(0xFF17131D) : Colors.white,
   );
   return ThemeData(
     useMaterial3: true,
     fontFamily: 'Vazirmatn',
     brightness: dark ? Brightness.dark : Brightness.light,
     colorScheme: scheme,
-    scaffoldBackgroundColor: dark
-        ? AppColors.background
-        : const Color(0xFFF5F7F6),
+    scaffoldBackgroundColor: background,
     textTheme: ThemeData(brightness: dark ? Brightness.dark : Brightness.light)
         .textTheme
         .apply(
@@ -55,14 +64,14 @@ ThemeData buildAppTheme({required bool dark}) {
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(0, 38),
-        foregroundColor: AppColors.emeraldDark,
+        foregroundColor: accent,
         textStyle: const TextStyle(
           fontFamily: 'Vazirmatn',
           fontSize: 13.5,
           fontWeight: FontWeight.w600,
         ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        side: BorderSide(color: AppColors.emerald.withValues(alpha: .45)),
+        side: BorderSide(color: accent.withValues(alpha: .45)),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
@@ -76,24 +85,24 @@ ThemeData buildAppTheme({required bool dark}) {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     ),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: AppColors.emerald,
-      foregroundColor: Color(0xFF042519),
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: accent,
+      foregroundColor: scheme.onPrimary,
       elevation: 3,
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: dark ? AppColors.surface : Colors.white,
+      backgroundColor: surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: dark ? AppColors.surface : Colors.white,
+      backgroundColor: surface,
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
     ),
     cardTheme: CardThemeData(
-      color: dark ? AppColors.surface : Colors.white,
+      color: surface,
       elevation: 0,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
@@ -105,7 +114,7 @@ ThemeData buildAppTheme({required bool dark}) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: dark ? AppColors.surfaceRaised : const Color(0xFFF1F4F2),
+      fillColor: raised,
       hintStyle: TextStyle(
         color: dark ? AppColors.muted : const Color(0xFF7B817E),
         fontSize: 13,
@@ -123,12 +132,12 @@ ThemeData buildAppTheme({required bool dark}) {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(13),
-        borderSide: const BorderSide(color: AppColors.emerald),
+        borderSide: BorderSide(color: accent),
       ),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      backgroundColor: dark ? AppColors.surfaceRaised : const Color(0xFF1F2937),
+      backgroundColor: dark ? raised : const Color(0xFF1F2937),
       contentTextStyle: const TextStyle(
         fontFamily: 'Vazirmatn',
         color: Colors.white,

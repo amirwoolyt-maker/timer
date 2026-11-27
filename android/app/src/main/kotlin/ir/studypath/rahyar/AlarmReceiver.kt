@@ -19,9 +19,13 @@ class AlarmReceiver : BroadcastReceiver() {
 
 class AlarmBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+        if (intent.action in listOf(
+                Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED,
+                Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED,
+            )) {
             AlarmScheduler.restore(context)
             TaskScheduler.restore(context)
+            StudyTimerScheduler.restore(context)
         }
     }
 }

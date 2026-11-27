@@ -1,22 +1,19 @@
 part of '../../feature_pages.dart';
 
-const educationGrades = <String, String>{
-  'elementary': 'ابتدایی',
-  '7': 'هفتم',
-  '8': 'هشتم',
-  '9': 'نهم',
-  '10': 'دهم',
-  '11': 'یازدهم',
-  '12': 'دوازدهم',
-  'student': 'دانشجو',
-};
-
 String profileGenderKey(WidgetRef ref) {
   final userId = ref.read(cloudUserProvider).asData?.value?.id;
   return userId == null ? 'profile.gender' : 'profile.gender:$userId';
 }
 
 String profilePreference(WidgetRef ref, String key, [String fallback = '']) {
+  final user = ref.watch(cloudUserProvider).asData?.value;
+  final plain = key.replaceFirst('profile.', '');
+  if (user != null && !plain.contains(':')) {
+    final value = user.profile.toMap()[plain];
+    if (value != null && '$value'.isNotEmpty) return '$value';
+    if (plain == 'name' && user.name.isNotEmpty) return user.name;
+    key = '$key:${user.id}';
+  }
   final values =
       ref.watch(preferencesProvider).asData?.value ?? <AppPreference>[];
   for (final value in values) {
@@ -37,7 +34,10 @@ class ProfilePage extends ConsumerWidget {
     );
     final grade = profilePreference(ref, 'profile.grade');
     final subject = profilePreference(ref, 'profile.subject');
-    final gender = profilePreference(ref, profileGenderKey(ref));
+    final gender = profilePreference(ref, 'profile.gender');
+    final age = profilePreference(ref, 'profile.age');
+    final avatar = profilePreference(ref, 'profile.avatar');
+    final user = ref.watch(cloudUserProvider).asData?.value;
     return PageFrame(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -70,20 +70,20 @@ class ProfilePage extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 12),
+          if (user?.isOffline ?? false)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'حالت آفلاین؛ پروفایل ذخیره‌شده نمایش داده می‌شود. برای ویرایش اطلاعات حساب، به اینترنت وصل شو.',
+                style: TextStyle(height: 1.8),
+              ),
+            ),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(22),
               child: Column(
                 children: [
-                  const CircleAvatar(
-                    radius: 32,
-                    backgroundColor: Color(0x2210B981),
-                    child: Icon(
-                      Icons.person_rounded,
-                      size: 36,
-                      color: AppColors.emerald,
-                    ),
-                  ),
+                  ProfileAvatar(avatar: avatar),
                   const SizedBox(height: 12),
                   Text(
                     name,
@@ -104,6 +104,7 @@ class ProfilePage extends ConsumerWidget {
                                   : 'Grade $grade')
                             : educationGrades[grade] ?? grade,
                       if (subject.isNotEmpty) subject,
+                      if (age.isNotEmpty) english ? '$age years' : '$age سال',
                       if (gender.isNotEmpty)
                         english
                             ? {
@@ -238,132 +239,15 @@ class ProfilePage extends ConsumerWidget {
     );
   }
 
-  Future<void> _editProfile(BuildContext context, WidgetRef ref) async {
-    final english = ref.read(languageProvider);
-    final values = {
-      for (final p
-          in ref.read(preferencesProvider).asData?.value ?? <AppPreference>[])
-        p.key: p.value,
-    };
-    final name = TextEditingController(text: values['profile.name']);
-    final subject = TextEditingController(text: values['profile.subject']);
-    final genderKey = profileGenderKey(ref);
-    var gender = values[genderKey] ?? 'unspecified';
-    var grade = educationGrades.containsKey(values['profile.grade'])
-        ? values['profile.grade']!
-        : '12';
-    final form = GlobalKey<FormState>();
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: Text(english ? 'Your profile' : 'اطلاعات من'),
-          content: SingleChildScrollView(
-            child: Form(
-              key: form,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: name,
-                    maxLength: 60,
-                    decoration: InputDecoration(
-                      labelText: english ? 'Display name' : 'نام نمایشی',
-                    ),
-                    validator: (v) => (v?.trim().isEmpty ?? true)
-                        ? (english ? 'Enter your name' : 'نامت را وارد کن')
-                        : null,
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    key: const Key('profile-gender'),
-                    isExpanded: true,
-                    initialValue: gender,
-                    decoration: InputDecoration(
-                      labelText: english ? 'Gender' : 'جنسیت',
-                    ),
-                    items: [
-                      DropdownMenuItem(
-                        value: 'female',
-                        child: Text(english ? 'Female' : 'دختر / زن'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'male',
-                        child: Text(english ? 'Male' : 'پسر / مرد'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'unspecified',
-                        child: Text(
-                          english ? 'Prefer not to say' : 'ترجیح می‌دهم نگویم',
-                        ),
-                      ),
-                    ],
-                    onChanged: (value) => update(() => gender = value!),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: grade,
-                    decoration: InputDecoration(
-                      labelText: english ? 'Education level' : 'پایهٔ تحصیلی',
-                    ),
-                    items: educationGrades.entries
-                        .map(
-                          (e) => DropdownMenuItem(
-                            value: e.key,
-                            child: Text(
-                              english
-                                  ? (e.key == 'student'
-                                        ? 'University'
-                                        : e.key == 'elementary'
-                                        ? 'Elementary'
-                                        : 'Grade ${e.key}')
-                                  : e.value,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => update(() => grade = v!),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: subject,
-                    maxLength: 60,
-                    decoration: InputDecoration(
-                      labelText: english ? 'Field of study' : 'رشتهٔ تحصیلی',
-                      hintText: english
-                          ? 'Optional'
-                          : 'اختیاری؛ مثلاً ریاضی یا تجربی',
-                    ),
-                  ),
-                ],
-              ),
-            ),
+  Future<void> _editProfile(BuildContext context, WidgetRef ref) =>
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ProfileSetupPage(
+            user: ref.read(cloudUserProvider).asData?.value,
+            editing: true,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(english ? 'Cancel' : 'انصراف'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (form.currentState!.validate()) Navigator.pop(context, true);
-              },
-              child: Text(english ? 'Save' : 'ذخیره'),
-            ),
-          ],
         ),
-      ),
-    );
-    if (saved == true) {
-      final db = ref.read(databaseProvider);
-      await db.transaction(() async {
-        await db.savePreference('profile.name', name.text.trim());
-        await db.savePreference('profile.grade', grade);
-        await db.savePreference('profile.subject', subject.text.trim());
-        await db.savePreference(genderKey, gender);
-      });
-    }
-  }
+      );
 
   Future<void> _editBook(
     BuildContext context,

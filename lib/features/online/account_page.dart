@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/online/online_backend.dart';
+import 'profile_setup_page.dart';
 
 class AccountPage extends ConsumerStatefulWidget {
   const AccountPage({super.key});
@@ -12,15 +13,12 @@ class AccountPage extends ConsumerStatefulWidget {
 }
 
 class _AccountPageState extends ConsumerState<AccountPage> {
-  final _email = TextEditingController(),
-      _code = TextEditingController(),
-      _name = TextEditingController();
+  final _email = TextEditingController(), _code = TextEditingController();
   EmailChallenge? _challenge;
   Timer? _timer;
   DateTime? _resendAt;
   String? _error, _notice;
   bool _busy = false;
-  String? _editingUser;
   int get _remaining =>
       (_resendAt?.difference(DateTime.now()).inSeconds ?? 0).clamp(0, 60);
   @override
@@ -28,7 +26,6 @@ class _AccountPageState extends ConsumerState<AccountPage> {
     _timer?.cancel();
     _email.dispose();
     _code.dispose();
-    _name.dispose();
     super.dispose();
   }
 
@@ -223,7 +220,7 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                     child: Icon(
                       verifying
                           ? Icons.mark_email_read_outlined
-                            : Icons.alternate_email_rounded,
+                          : Icons.alternate_email_rounded,
                       size: 47,
                       color: dark
                           ? const Color(0xFF99F4D0)
@@ -305,8 +302,8 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                       Expanded(
                         child: Text(
                           verifying
-                              ? '۲ از ۲ • تأیید ایمیل'
-                              : '۱ از ۲ • ورود / ساخت حساب',
+                              ? '۲ از ۳ • تأیید ایمیل'
+                              : '۱ از ۳ • ورود / ساخت حساب',
                           style: const TextStyle(
                             fontSize: 10,
                             color: AppColors.muted,
@@ -327,8 +324,8 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                   const SizedBox(height: 8),
                   Text(
                     verifying
-                        ? 'کد شش‌رقمی را وارد کن تا مستقیم وارد برنامه شوی.'
-                        : 'ایمیلت را بنویس؛ یک کد ورود برایت می‌فرستیم. رمز عبور لازم نیست.',
+                        ? 'کد شش‌رقمی را وارد کن؛ برای حساب تازه، در گام بعد پروفایلت را می‌سازیم.'
+                        : 'با ایمیل وارد شو یا حساب بساز. بعد از تأیید، نام، سن، پایه و آواتارت را انتخاب می‌کنی. رمز عبور لازم نیست.',
                     style: const TextStyle(height: 1.9, fontSize: 12),
                   ),
                   const SizedBox(height: 21),
@@ -480,20 +477,12 @@ class _AccountPageState extends ConsumerState<AccountPage> {
   }
 
   Widget _profile(BuildContext context, CloudUser user) {
-    if (_editingUser != user.id) {
-      _editingUser = user.id;
-      _name.text = user.name;
-    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.verified_user_outlined,
-            color: AppColors.emerald,
-            size: 54,
-          ),
+          Center(child: ProfileAvatar(avatar: user.profile.avatar, radius: 38)),
           const SizedBox(height: 16),
           const Text(
             'حساب آنلاین تو',
@@ -507,29 +496,24 @@ class _AccountPageState extends ConsumerState<AccountPage> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
-          TextField(
-            key: const Key('account-name'),
-            controller: _name,
-            maxLength: 60,
-            decoration: const InputDecoration(labelText: 'نام نمایشی عمومی'),
+          Text(
+            user.displayName,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
           ),
-          FilledButton(
-            onPressed: _busy
-                ? null
-                : () {
-                    if (_name.text.trim().isEmpty) {
-                      setState(() => _error = 'نام نمایشی را وارد کن.');
-                      return;
-                    }
-                    _accountAction((backend) async {
-                      await backend.updateName(_name.text);
-                    });
-                  },
-            child: const Text('ذخیرهٔ نام نمایشی'),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ProfileSetupPage(user: user, editing: true),
+              ),
+            ),
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('ویرایش نام، سن و پروفایل'),
           ),
           const SizedBox(height: 14),
           const Text(
-            'برای تغییر جنسیت، پایه و رشته به بخش پروفایل برو. ایمیلت در پست‌ها و چت نمایش داده نمی‌شود. خروج از حساب، داده‌های آفلاین این دستگاه را پاک نمی‌کند.',
+            'نام، سن، پایه، جنسیت و آواتارت را از ویرایش پروفایل تغییر بده. ایمیل و اطلاعات تحصیلی‌ات در پست‌ها و چت نمایش داده نمی‌شوند. خروج از حساب، داده‌های آفلاین این دستگاه را پاک نمی‌کند.',
             style: TextStyle(height: 1.9, fontSize: 12),
           ),
           TextButton.icon(

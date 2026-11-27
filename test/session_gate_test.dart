@@ -8,6 +8,7 @@ import 'package:rahyar/data/local/app_database.dart';
 import 'package:rahyar/data/online/online_backend.dart';
 import 'package:rahyar/data/repositories/providers.dart';
 import 'package:rahyar/main.dart';
+import 'package:rahyar/features/online/profile_setup_page.dart';
 import 'support/fake_online_backend.dart';
 
 Future<void> pumpData(WidgetTester tester) async {
@@ -59,7 +60,14 @@ void main() {
         await db.savePreference('profile.grade', '10');
         await db.savePreference('profile.gender:user-one', 'unspecified');
       });
-      final backend = FakeOnlineBackend();
+      final backend = FakeOnlineBackend()
+        ..verifiedProfile = const UserProfile(
+          name: 'همراه',
+          age: 18,
+          grade: '10',
+          gender: 'unspecified',
+          avatar: 'fox',
+        );
       await mount(tester, db, backend);
       expect(find.byType(AppShell), findsNothing);
       expect(find.text('به راهیار خوش آمدی'), findsOneWidget);
@@ -82,7 +90,7 @@ void main() {
     },
   );
   testWidgets(
-    'first signed-in launch asks for gender and saves it per account',
+    'first account completes name, age, education, gender and avatar',
     (tester) async {
       final db = AppDatabase(NativeDatabase.memory());
       await tester.runAsync(() => db.savePreference('profile.grade', '10'));
@@ -94,27 +102,37 @@ void main() {
         );
       await mount(tester, db, backend);
       await pumpData(tester);
-      expect(find.text('پروفایلت را کامل کن'), findsOneWidget);
-      expect(
-        tester
-            .widget<FilledButton>(find.widgetWithText(FilledButton, 'ادامه'))
-            .onPressed,
-        isNull,
-      );
+      expect(find.byType(ProfileSetupPage), findsOneWidget);
+      expect(find.byType(AppShell), findsNothing);
+      await tester.tap(find.byKey(const Key('avatar-fox')));
+      await tester.enterText(find.byKey(const Key('onboarding-name')), 'سارا');
+      await tester.enterText(find.byKey(const Key('onboarding-age')), '۱۷');
+      await tester.ensureVisible(find.byKey(const Key('onboarding-grade')));
+      await tester.tap(find.byKey(const Key('onboarding-grade')));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('دهم').last);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.ensureVisible(find.byKey(const Key('onboarding-gender')));
       await tester.tap(find.byKey(const Key('onboarding-gender')));
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.text('دختر / زن').last);
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('ادامه'));
+      await tester.ensureVisible(find.byKey(const Key('profile-save')));
+      await tester.tap(find.byKey(const Key('profile-save')));
       await pumpData(tester);
+      await pumpData(tester);
+      expect(backend.user!.profile.complete, isTrue);
+      expect(backend.user!.profile.age, 17);
+      expect(backend.user!.profile.gender, 'female');
+      expect(find.byType(ProfileSetupPage), findsNothing);
+      expect(find.byType(AppShell), findsOneWidget);
       final prefs = await tester.runAsync(
         () => db.select(db.appPreferences).get(),
       );
       expect(
-        prefs!.singleWhere((p) => p.key == 'profile.gender:new-user').value,
-        'female',
+        prefs!.singleWhere((p) => p.key == 'profile.age:new-user').value,
+        '17',
       );
-      expect(find.text('پروفایلت را کامل کن'), findsNothing);
       expect(tester.takeException(), isNull);
       await cleanup(tester, db, backend);
     },
@@ -153,4 +171,34 @@ void main() {
     expect(find.byKey(const Key('account-email')), findsNothing);
     await cleanup(tester, db, backend);
   });
+  testWidgets(
+    'offline tools do not bypass profile setup after account recovery',
+    (tester) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      await tester.runAsync(() => db.savePreference('profile.grade', '10'));
+      final backend = FakeOnlineBackend()..offline = true;
+      await mount(tester, db, backend);
+      await pumpData(tester);
+      expect(find.text('بررسی حساب انجام نشد'), findsOneWidget);
+      await tester.tap(find.text('ادامه با ابزارهای آفلاین'));
+      await pumpData(tester);
+      expect(find.byType(AppShell), findsOneWidget);
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(AppShell)),
+      );
+      backend.offline = false;
+      backend.user = const CloudUser(
+        id: 'recovered',
+        email: 'recovered@example.com',
+        name: '',
+      );
+      container.invalidate(cloudUserProvider);
+      await pumpData(tester);
+      await pumpData(tester);
+      expect(find.byType(ProfileSetupPage), findsOneWidget);
+      expect(find.byType(AppShell), findsNothing);
+      expect(tester.takeException(), isNull);
+      await cleanup(tester, db, backend);
+    },
+  );
 }

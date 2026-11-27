@@ -6,9 +6,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
 import org.json.JSONObject
@@ -17,24 +14,10 @@ import android.os.Handler
 import android.os.Looper
 
 class AlarmRingingService : Service() {
-    private var player: MediaPlayer? = null
+    private var player: LoopingAlarmPlayer? = null
     private var currentAlarmId: String? = null
     private var isPreview = false
-    private var clipStartMs = 0
-    private var clipEndMs = 30_000
     private val handler = Handler(Looper.getMainLooper())
-    private val clipLoop = object : Runnable {
-        override fun run() {
-            try {
-                val active = player
-                if (active != null && active.isPlaying && active.currentPosition >= clipEndMs - 100) {
-                    active.seekTo(clipStartMs)
-                    if (!active.isPlaying) active.start()
-                }
-            } catch (_: Exception) { }
-            handler.postDelayed(this, 250)
-        }
-    }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val id = intent?.getStringExtra("alarmId") ?: AlarmScheduler.preferences(this).getString("activeAlarm", null)
@@ -83,39 +66,18 @@ class AlarmRingingService : Service() {
         if (player == null) {
             try {
                 val custom = prefs.getString("sound:$id", null)
-                val uri = custom?.let { Uri.parse(it) } ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                    ?: error("No alarm tone is available on this device")
-                clipStartMs = prefs.getLong("soundStart:$id", 0L).toInt().coerceAtLeast(0)
-                val duration = prefs.getLong("soundDuration:$id", 30_000L).toInt().coerceAtLeast(1)
-                clipStartMs = clipStartMs.coerceAtMost((duration - 1).coerceAtLeast(0))
-                clipEndMs = (clipStartMs + 30_000).coerceAtMost(duration).coerceAtLeast(clipStartMs + 1)
-                val nextPlayer = MediaPlayer()
-                player = nextPlayer
-                nextPlayer.apply {
-                    setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-                    setDataSource(applicationContext, uri)
-                    setVolume(1f, 1f)
-                    isLooping = false
-                    setWakeMode(applicationContext, android.os.PowerManager.PARTIAL_WAKE_LOCK)
-                    setOnCompletionListener { completed ->
-                        try {
-                            completed.seekTo(clipStartMs)
-                            completed.start()
-                        } catch (_: Exception) { }
-                    }
-                    setOnErrorListener { _, what, extra ->
-                        prefs.edit().putString("activeAlarmError", "صدای زنگ پخش نشد ($what/$extra)").apply()
-                        if (isPreview) stopSelf(startId)
-                        true
-                    }
-                    prepare()
-                    seekTo(clipStartMs)
-                    start()
+                val nextPlayer = LoopingAlarmPlayer(applicationContext) { message ->
+                    prefs.edit().putString("activeAlarmError", message).apply()
                 }
-                prefs.edit().remove("activeAlarmError").apply()
-                handler.post(clipLoop)
+                player = nextPlayer
+                val played = nextPlayer.start(
+                    custom?.let { Uri.parse(it) },
+                    prefs.getLong("soundStart:$id", 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
+                )
+                if (played) prefs.edit().remove("activeAlarmError").apply()
+                else if (preview) stopSelf(startId)
             } catch (error: Exception) {
-                player?.release()
+                player?.stop()
                 player = null
                 prefs.edit().putString(
                     "activeAlarmError",
@@ -145,8 +107,7 @@ class AlarmRingingService : Service() {
 
     private fun stopPlayback() {
         handler.removeCallbacksAndMessages(null)
-        try { player?.stop() } catch (_: Exception) { }
-        player?.release()
+        player?.stop()
         player = null
     }
 }

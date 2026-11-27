@@ -46,10 +46,36 @@ abstract final class PlatformServices {
       _invoke<void>('stopAlarm', {'id': id});
   static Future<bool> startAlarmPreview(String id) async =>
       await _invoke<bool>('startAlarmPreview', {'id': id}) ?? false;
+  static Future<bool> startAlarmChallenge(String id) async =>
+      await _invoke<bool>('startAlarmChallenge', {'id': id}) ?? false;
   static Future<void> stopAlarmPreview(String id) async =>
       _invoke<void>('stopAlarmPreview', {'id': id});
   static Future<bool> requestAlarmPermissions() async =>
       await _invoke<bool>('requestAlarmPermissions') ?? false;
+  static Future<bool> requestTimerPermissions() async =>
+      await _invoke<bool>('requestTimerPermissions') ?? false;
+  static Future<bool> scheduleStudyTimer(
+    String id,
+    DateTime deadline, {
+    required String title,
+  }) async =>
+      await _invoke<bool>('scheduleStudyTimer', {
+        'id': id,
+        'at': deadline.millisecondsSinceEpoch,
+        'title': title,
+      }) ??
+      false;
+  static Future<void> cancelStudyTimer(
+    String id, {
+    bool dismissRinging = true,
+  }) async => _invoke<void>('cancelStudyTimer', {
+    'id': id,
+    'dismissRinging': dismissRinging,
+  });
+  static Future<bool> completeStudyTimer(String id) async =>
+      await _invoke<bool>('completeStudyTimer', {'id': id}) ?? false;
+  static Future<String?> pendingStudyTimerId() =>
+      _invoke<String>('pendingStudyTimerId');
   static Future<bool> setFocusMode(bool enabled) async =>
       await _invoke<bool>('setFocusMode', {'enabled': enabled}) ?? false;
   static Future<void> requestFocusPermission() async =>

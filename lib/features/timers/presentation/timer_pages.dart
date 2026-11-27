@@ -14,25 +14,33 @@ class StudyTimerState {
     this.breakPhase = false,
     this.subject = '',
     this.sessionId = '',
+    this.alertSessionId = '',
     this.cycles = 0,
     this.focusMode = false,
     this.ready = false,
     this.error,
   });
-  final String mode, subject, sessionId;
+  final String mode, subject, sessionId, alertSessionId;
   final StudyClock clock;
   final int workMinutes, breakMinutes, cycles;
   final bool breakPhase, focusMode, ready;
   final String? error;
   bool get running => clock.running;
+  bool get alerting => alertSessionId.isNotEmpty;
   bool get countingUp => mode != 'pomodoro';
   int get duration => (breakPhase ? breakMinutes : workMinutes) * 60;
+  DateTime? get deadline => countingUp || !running
+      ? null
+      : clock.runningSince!.add(
+          Duration(seconds: duration - clock.elapsedSeconds),
+        );
   int secondsAt(DateTime now) =>
       countingUp ? clock.elapsedAt(now) : clock.remainingAt(now, duration);
   StudyTimerState copyWith({
     String? mode,
     String? subject,
     String? sessionId,
+    String? alertSessionId,
     StudyClock? clock,
     int? workMinutes,
     int? breakMinutes,
@@ -41,6 +49,7 @@ class StudyTimerState {
     bool? focusMode,
     bool? ready,
     String? error,
+    bool clearError = false,
   }) => StudyTimerState(
     mode: mode ?? this.mode,
     clock: clock ?? this.clock,
@@ -49,10 +58,11 @@ class StudyTimerState {
     breakPhase: breakPhase ?? this.breakPhase,
     subject: subject ?? this.subject,
     sessionId: sessionId ?? this.sessionId,
+    alertSessionId: alertSessionId ?? this.alertSessionId,
     cycles: cycles ?? this.cycles,
     focusMode: focusMode ?? this.focusMode,
     ready: ready ?? this.ready,
-    error: error,
+    error: clearError ? null : error ?? this.error,
   );
 }
 
@@ -90,6 +100,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
           breakPhase: saved['breakPhase'] == true,
           subject: saved['subject'] as String? ?? '',
           sessionId: saved['id'] as String? ?? '',
+          alertSessionId: saved['alertId'] as String? ?? '',
           cycles: saved['cycles'] as int? ?? 0,
           focusMode: saved['focusMode'] == true,
           ready: true,
@@ -98,7 +109,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
         state = state.copyWith(ready: true);
       }
       _ensureTicker();
-      _tick();
+      await refresh();
     } catch (_) {
       if (ref.mounted) {
         state = state.copyWith(
@@ -111,6 +122,67 @@ class StudyTimerController extends Notifier<StudyTimerState> {
 
   void _ensureTicker() {
     _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  /// Reconcile wall-clock time immediately after returning from the lock screen.
+  Future<void> refresh() async {
+    if (!ref.mounted || !state.ready) return;
+    if (PlatformServices.supportsBackgroundAlarms) {
+      final ringing = await PlatformServices.pendingStudyTimerId();
+      if (!ref.mounted) return;
+      state = state.copyWith(alertSessionId: ringing ?? '');
+    }
+    if (state.running &&
+        !state.countingUp &&
+        state.clock.elapsedAt(DateTime.now()) >= state.duration) {
+      await _completePhase();
+      return;
+    }
+    state = state.copyWith();
+    await _syncNativeAlert();
+  }
+
+  Future<void> _syncNativeAlert() async {
+    if (!ref.mounted || !PlatformServices.supportsBackgroundAlarms) return;
+    final snapshot = state;
+    final deadline = snapshot.deadline;
+    if (deadline == null) {
+      if (snapshot.sessionId.isNotEmpty) {
+        await PlatformServices.cancelStudyTimer(
+          snapshot.sessionId,
+          dismissRinging: false,
+        );
+      }
+      return;
+    }
+    final scheduled = await PlatformServices.scheduleStudyTimer(
+      snapshot.sessionId,
+      deadline,
+      title: snapshot.breakPhase
+          ? 'استراحت تمام شد؛ آمادهٔ مطالعه‌ای؟'
+          : 'آفرین! زمان مطالعه تمام شد',
+    );
+    if (!ref.mounted) return;
+    if (state.sessionId != snapshot.sessionId ||
+        !state.running ||
+        state.deadline != deadline) {
+      await _syncNativeAlert();
+      return;
+    }
+    if (!scheduled &&
+        ref.mounted &&
+        state.running &&
+        state.sessionId == snapshot.sessionId) {
+      state = state.copyWith(
+        error:
+            'زمان‌سنج ادامه دارد؛ برای زنگ پایان در پس‌زمینه، مجوز اعلان و آلارم دقیق را فعال کن.',
+      );
+    } else if (scheduled &&
+        ref.mounted &&
+        state.running &&
+        state.sessionId == snapshot.sessionId) {
+      state = state.copyWith(clearError: true);
+    }
   }
 
   void _tick() {
@@ -134,6 +206,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
       'breakPhase': snapshot.breakPhase,
       'subject': snapshot.subject,
       'id': snapshot.sessionId,
+      'alertId': snapshot.alertSessionId,
       'cycles': snapshot.cycles,
       'focusMode': snapshot.focusMode,
     });
@@ -159,35 +232,56 @@ class StudyTimerController extends Notifier<StudyTimerState> {
       subject: subject,
       focusMode: focusMode,
       breakPhase: mode == null ? null : false,
+      clearError: true,
     );
     await _persist();
   }
 
   Future<void> start({bool focusMode = false}) async {
     if (!state.ready || state.running || _finishing) return;
+    // Starting the next phase is an explicit acknowledgement of the last alarm.
+    final oldAlertId = state.alertSessionId;
     state = state.copyWith(
       clock: state.clock.start(DateTime.now()),
       sessionId: state.sessionId.isEmpty ? const Uuid().v4() : state.sessionId,
       focusMode: focusMode,
+      alertSessionId: '',
+      clearError: true,
     );
     _ensureTicker();
-    if (focusMode) await PlatformServices.setFocusMode(true);
     await _persist();
+    if (oldAlertId.isNotEmpty) {
+      await PlatformServices.cancelStudyTimer(oldAlertId);
+    }
+    if (!ref.mounted || !state.running) return;
+    if (focusMode && state.running) await PlatformServices.setFocusMode(true);
+    if (!ref.mounted || !state.running) return;
+    if (!state.countingUp && PlatformServices.supportsBackgroundAlarms) {
+      await PlatformServices.requestTimerPermissions();
+    }
+    if (ref.mounted) await _syncNativeAlert();
   }
 
   Future<void> pause() async {
     if (!state.running) return;
     state = state.copyWith(clock: state.clock.pause(DateTime.now()));
+    await PlatformServices.cancelStudyTimer(
+      state.sessionId,
+      dismissRinging: false,
+    );
     if (state.focusMode) await PlatformServices.setFocusMode(false);
     await _persist();
   }
 
   Future<void> reset() async {
     if (state.running || _finishing) return;
+    await dismissAlert();
+    await PlatformServices.cancelStudyTimer(state.sessionId);
     state = state.copyWith(
       clock: const StudyClock(),
       sessionId: '',
       breakPhase: false,
+      clearError: true,
     );
     await _persist();
   }
@@ -196,11 +290,19 @@ class StudyTimerController extends Notifier<StudyTimerState> {
     if (_finishing) return;
     _finishing = true;
     final snapshot = state;
-    state = state.copyWith(clock: state.clock.pause(DateTime.now()));
+    final endedAt = DateTime.now();
+    await dismissAlert();
+    state = state.copyWith(clock: state.clock.pause(endedAt));
+    await PlatformServices.cancelStudyTimer(snapshot.sessionId);
     if (snapshot.focusMode) await PlatformServices.setFocusMode(false);
     try {
       if (!snapshot.breakPhase) {
-        await _saveSession(snapshot, snapshot.clock.elapsedAt(DateTime.now()));
+        final seconds = snapshot.clock.elapsedAt(endedAt);
+        await _saveSession(
+          snapshot,
+          snapshot.countingUp ? seconds : seconds.clamp(0, snapshot.duration),
+          endedAt: endedAt,
+        );
       }
       if (!ref.mounted) return;
       state = state.copyWith(
@@ -208,6 +310,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
         sessionId: '',
         breakPhase: false,
         focusMode: false,
+        clearError: true,
       );
       await _persist();
     } catch (_) {
@@ -219,7 +322,11 @@ class StudyTimerController extends Notifier<StudyTimerState> {
     }
   }
 
-  Future<void> _saveSession(StudyTimerState snapshot, int seconds) async {
+  Future<void> _saveSession(
+    StudyTimerState snapshot,
+    int seconds, {
+    required DateTime endedAt,
+  }) async {
     if (seconds < 60 || snapshot.sessionId.isEmpty) return;
     final db = ref.read(databaseProvider);
     // Stable session ID makes retrying a failed save safe.
@@ -234,7 +341,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
                   : snapshot.subject.trim(),
             ),
             durationMinutes: seconds ~/ 60,
-            startedAt: DateTime.now().subtract(Duration(seconds: seconds)),
+            startedAt: endedAt.subtract(Duration(seconds: seconds)),
           ),
         );
   }
@@ -244,18 +351,33 @@ class StudyTimerController extends Notifier<StudyTimerState> {
     _finishing = true;
     final snapshot = state;
     state = state.copyWith(clock: StudyClock(elapsedSeconds: state.duration));
+    final nativeRinging = await PlatformServices.completeStudyTimer(
+      snapshot.sessionId,
+    );
+    if (ref.mounted && nativeRinging) {
+      // The stop action must stay available even if recording this session fails.
+      state = state.copyWith(alertSessionId: snapshot.sessionId);
+    }
     if (snapshot.focusMode) await PlatformServices.setFocusMode(false);
     try {
-      if (!snapshot.breakPhase) await _saveSession(snapshot, snapshot.duration);
+      if (!snapshot.breakPhase) {
+        await _saveSession(
+          snapshot,
+          snapshot.duration,
+          endedAt: snapshot.deadline ?? DateTime.now(),
+        );
+      }
       if (!ref.mounted) return;
       state = state.copyWith(
         clock: const StudyClock(),
         sessionId: '',
+        alertSessionId: nativeRinging ? snapshot.sessionId : '',
         breakPhase: !snapshot.breakPhase,
         cycles: snapshot.cycles + (snapshot.breakPhase ? 0 : 1),
+        clearError: true,
       );
       await _persist();
-      unawaited(SystemSound.play(SystemSoundType.alert));
+      if (!nativeRinging) unawaited(SystemSound.play(SystemSoundType.alert));
       unawaited(HapticFeedback.mediumImpact());
     } catch (_) {
       if (ref.mounted) {
@@ -266,6 +388,15 @@ class StudyTimerController extends Notifier<StudyTimerState> {
     } finally {
       _finishing = false;
     }
+  }
+
+  Future<void> dismissAlert() async {
+    final id = state.alertSessionId;
+    if (id.isEmpty) return;
+    await PlatformServices.cancelStudyTimer(id);
+    if (!ref.mounted || state.alertSessionId != id) return;
+    state = state.copyWith(alertSessionId: '');
+    await _persist();
   }
 }
 
@@ -438,6 +569,20 @@ class StudyTimerPage extends ConsumerWidget {
                     ),
                   ],
                 ),
+                if (state.alerting) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      key: const Key('timer-dismiss-alarm'),
+                      onPressed: controller.dismissAlert,
+                      icon: const Icon(Icons.volume_off_rounded),
+                      label: Text(
+                        tr('قطع صدای پایان زمان‌سنج', 'Stop timer alarm'),
+                      ),
+                    ),
+                  ),
+                ],
                 if (state.error != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 10),

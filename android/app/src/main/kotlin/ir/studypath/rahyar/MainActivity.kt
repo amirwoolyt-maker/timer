@@ -18,6 +18,7 @@ class MainActivity : FlutterActivity() {
     private var soundResult: MethodChannel.Result? = null
     private var soundAlarmId: String? = null
     private var alarmPermissionResult: MethodChannel.Result? = null
+    private var alarmNeedsFullScreen = true
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -63,6 +64,25 @@ class MainActivity : FlutterActivity() {
                             TaskScheduler.cancel(this, call.argument<String>("id") ?: "")
                             result.success(null)
                         }
+                        "scheduleStudyTimer" -> result.success(
+                            StudyTimerScheduler.save(
+                                this,
+                                call.argument<String>("id") ?: error("Missing timer ID"),
+                                call.argument<Number>("at")?.toLong() ?: 0L,
+                                call.argument<String>("title") ?: "زمان مطالعه تمام شد",
+                            ),
+                        )
+                        "cancelStudyTimer" -> {
+                            StudyTimerScheduler.cancel(this, call.argument<String>("id") ?: "", call.argument<Boolean>("dismissRinging") != false)
+                            result.success(null)
+                        }
+                        "completeStudyTimer" -> result.success(
+                            StudyTimerScheduler.fire(this, call.argument<String>("id") ?: ""),
+                        )
+                        "pendingStudyTimerId" -> result.success(
+                            AlarmScheduler.preferences(this).getString(StudyTimerScheduler.RINGING, null)
+                                ?.let { org.json.JSONObject(it).optString("id") },
+                        )
                         "pendingAlarmId" -> result.success(
                             AlarmScheduler.preferences(this).getString("activeAlarm", null),
                         )
@@ -75,11 +95,12 @@ class MainActivity : FlutterActivity() {
                             val activeAlarm = prefs.getString("activeAlarm", null)
                             val previewAlarm = prefs.getString("previewAlarm", null)
                             if (activeAlarm == id || previewAlarm == id) {
-                                stopService(Intent(this, AlarmRingingService::class.java))
                                 val editor = prefs.edit().remove("activeAlarmError")
                                 if (activeAlarm == id) editor.remove("activeAlarm")
                                 if (previewAlarm == id) editor.remove("previewAlarm")
-                                editor.apply()
+                                // Clear the sticky restart marker before stopping the service.
+                                editor.commit()
+                                stopService(Intent(this, AlarmRingingService::class.java))
                             }
                             result.success(null)
                         }
@@ -107,7 +128,26 @@ class MainActivity : FlutterActivity() {
                             else startService(intent)
                             result.success(true)
                         }
+                        "startAlarmChallenge" -> {
+                            val id = call.argument<String>("id") ?: error("Missing alarm ID")
+                            val prefs = AlarmScheduler.preferences(this)
+                            val active = prefs.getString("activeAlarm", null)
+                            if (active != null && active != id) {
+                                result.success(false)
+                                return@setMethodCallHandler
+                            }
+                            // A challenge is a real, unlimited alarm, even when started
+                            // with the test button. Only sound-file previews expire.
+                            prefs.edit().putString("activeAlarm", id).remove("previewAlarm")
+                                .remove("activeAlarmError").commit()
+                            val intent = Intent(this, AlarmRingingService::class.java)
+                                .putExtra("alarmId", id).putExtra("preview", false)
+                            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent)
+                            else startService(intent)
+                            result.success(true)
+                        }
                         "requestAlarmPermissions" -> requestAlarmPermissions(result)
+                        "requestTimerPermissions" -> requestAlarmPermissions(result, fullScreen = false)
                         "setFocusMode" -> {
                             val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
                             if (manager.isNotificationPolicyAccessGranted) {
@@ -162,12 +202,13 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    private fun requestAlarmPermissions(result: MethodChannel.Result) {
+    private fun requestAlarmPermissions(result: MethodChannel.Result, fullScreen: Boolean = true) {
         if (alarmPermissionResult != null) {
             result.error("PERMISSION_FLOW_BUSY", "Alarm permission request already in progress", null)
             return
         }
         alarmPermissionResult = result
+        alarmNeedsFullScreen = fullScreen
         continueAlarmPermissionFlow()
     }
 
@@ -188,7 +229,7 @@ class MainActivity : FlutterActivity() {
                 )
                 return
             }
-            if (Build.VERSION.SDK_INT >= 34) {
+            if (alarmNeedsFullScreen && Build.VERSION.SDK_INT >= 34) {
                 val notifications = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
                 if (!notifications.canUseFullScreenIntent()) {
                     startActivityForResult(

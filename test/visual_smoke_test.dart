@@ -56,6 +56,13 @@ void main() {
             id: 'visual',
             email: 'test@example.com',
             name: 'همراه',
+            profile: UserProfile(
+              name: 'همراه',
+              age: 18,
+              grade: '12',
+              gender: 'unspecified',
+              avatar: 'fox',
+            ),
           );
         await tester.pumpWidget(
           RepaintBoundary(
@@ -81,6 +88,9 @@ void main() {
         ProviderScope.containerOf(
           tester.element(find.byType(AppShell)),
         ).invalidate(cloudUserProvider);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 60)),
+        );
         await tester.pump(const Duration(milliseconds: 400));
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.text('به راهیار خوش آمدی'), findsOneWidget);

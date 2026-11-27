@@ -6,10 +6,16 @@ class FakeOnlineBackend implements OnlineBackend {
   String? sentEmail, verifiedCode;
   int sendCount = 0;
   bool rejectCode = false;
+  bool offline = false;
+  UserProfile? verifiedProfile;
   final entries = <String, List<CloudEntry>>{};
   final events = StreamController<void>.broadcast();
   @override
-  Future<CloudUser?> currentUser() async => user;
+  Future<CloudUser?> currentUser() async {
+    if (offline) throw StateError('Offline');
+    return user;
+  }
+
   @override
   Future<EmailChallenge> sendCode(String email) async {
     sentEmail = normalizeEmail(email);
@@ -21,12 +27,32 @@ class FakeOnlineBackend implements OnlineBackend {
   Future<CloudUser> verifyCode(String userId, String code) async {
     verifiedCode = code;
     if (rejectCode) throw StateError('Rejected by fake server');
-    return user = CloudUser(id: userId, email: sentEmail!, name: '');
+    return user = CloudUser(
+      id: userId,
+      email: sentEmail!,
+      name: verifiedProfile?.name ?? '',
+      profile: verifiedProfile ?? const UserProfile(),
+    );
   }
 
   @override
-  Future<CloudUser> updateName(String name) async =>
-      user = CloudUser(id: user!.id, email: user!.email, name: name.trim());
+  Future<CloudUser> updateName(String name) async => user = CloudUser(
+    id: user!.id,
+    email: user!.email,
+    name: name.trim(),
+    profile: user!.profile,
+  );
+  @override
+  Future<CloudUser> updateProfile(UserProfile profile) async {
+    if (offline) throw StateError('Offline');
+    return user = CloudUser(
+      id: user!.id,
+      email: user!.email,
+      name: profile.name,
+      profile: profile,
+    );
+  }
+
   @override
   Future<void> signOut() async {
     user = null;

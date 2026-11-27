@@ -18,8 +18,10 @@ import '../core/platform/platform_services.dart';
 import '../core/platform/task_reminders.dart';
 import '../data/online/online_backend.dart';
 import '../data/local/app_database.dart';
+import '../data/catalog/iran_universities.dart';
 import '../data/repositories/providers.dart';
 import 'online/account_page.dart';
+import 'online/profile_setup_page.dart';
 import 'online/cloud_hub_page.dart';
 
 part 'tasks/presentation/tasks_page.dart';
@@ -27,6 +29,7 @@ part 'notes/presentation/notes_page.dart';
 part 'timers/presentation/timer_pages.dart';
 part 'social/presentation/community_page.dart';
 part 'more/presentation/more_pages.dart';
+part 'more/presentation/university_directory_page.dart';
 part 'profile/presentation/profile_page.dart';
 
 Future<void> _restoreNote(

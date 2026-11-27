@@ -1,16 +1,18 @@
 // ignore_for_file: deprecated_member_use
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/state/app_state.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/app_scenes.dart';
+import 'features/appearance/appearance_page.dart';
 import 'core/platform/platform_services.dart';
 import 'data/repositories/providers.dart';
 import 'features/feature_pages.dart';
 import 'features/online/account_page.dart';
+import 'features/online/profile_setup_page.dart';
 import 'data/online/online_backend.dart';
 
 void main() {
@@ -31,7 +33,10 @@ class RahyarApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => MaterialApp(
     title: 'راهیار',
     debugShowCheckedModeBanner: false,
-    theme: buildAppTheme(dark: ref.watch(darkModeProvider)),
+    theme: buildAppTheme(
+      dark: ref.watch(darkModeProvider),
+      scene: ref.watch(appSceneProvider),
+    ),
     locale: Locale(ref.watch(languageProvider) ? 'en' : 'fa'),
     supportedLocales: const [Locale('fa'), Locale('en')],
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
@@ -55,6 +60,7 @@ class _SessionGateState extends ConsumerState<SessionGate>
     with WidgetsBindingObserver {
   Timer? _alarmCheck;
   bool _ringing = false, _checking = false;
+  bool _offlineTools = false;
   @override
   void initState() {
     super.initState();
@@ -97,19 +103,82 @@ class _SessionGateState extends ConsumerState<SessionGate>
     super.dispose();
   }
 
+  Widget _connectionNotice({bool profilePending = false}) {
+    final english = ref.watch(languageProvider);
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.wifi_off_rounded, size: 48),
+                const SizedBox(height: 18),
+                Text(
+                  profilePending
+                      ? (english
+                            ? 'Connect to finish your profile'
+                            : 'برای تکمیل پروفایل آنلاین شو')
+                      : (english
+                            ? 'Could not check your account'
+                            : 'بررسی حساب انجام نشد'),
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  english
+                      ? 'Check your connection. Your personal tools are also available offline.'
+                      : 'اتصال اینترنت را بررسی کن. ابزارهای شخصی را می‌توانی آفلاین هم استفاده کنی.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(height: 1.8),
+                ),
+                const SizedBox(height: 18),
+                FilledButton(
+                  onPressed: () => ref.invalidate(cloudUserProvider),
+                  child: Text(english ? 'Try again' : 'تلاش دوباره'),
+                ),
+                TextButton(
+                  onPressed: () => setState(() => _offlineTools = true),
+                  child: Text(
+                    english
+                        ? 'Continue with offline tools'
+                        : 'ادامه با ابزارهای آفلاین',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (ref.watch(onlineBackendProvider) == null) return const AppShell();
     // A scheduled ringing alarm must remain dismissible even while signed out.
     if (_ringing) return const Scaffold(body: SafeArea(child: AlarmsPage()));
-    return ref
-        .watch(cloudUserProvider)
-        .when(
-          data: (user) =>
-              user == null ? const AccountLanding() : const AppShell(),
-          loading: () => const AccountLanding(loading: true),
-          error: (_, _) => const AccountLanding(),
-        );
+    final session = ref.watch(cloudUserProvider);
+    final user = session.asData?.value;
+    // Keep observing authentication while using offline tools, so a subsequent
+    // successful sign-in still requires its own complete account profile.
+    if (_offlineTools && (user == null || user.isOffline)) {
+      return const AppShell();
+    }
+    return session.when(
+      data: (user) {
+        if (user == null) return const AccountLanding();
+        if (user.profile.complete) return const AppShell();
+        if (user.isOffline) return _connectionNotice(profilePending: true);
+        return ProfileSetupPage(key: ValueKey(user.id), user: user);
+      },
+      loading: () => const AccountLanding(loading: true),
+      error: (_, _) => _connectionNotice(),
+    );
   }
 }
 
@@ -222,6 +291,7 @@ class _AppShellState extends ConsumerState<AppShell>
       vsync: this,
       duration: const Duration(seconds: 8),
     )..repeat(reverse: true);
+    ref.read(studyTimerProvider);
     _loadPreferences();
     alarmMonitor = Timer.periodic(
       const Duration(seconds: 2),
@@ -238,7 +308,10 @@ class _AppShellState extends ConsumerState<AppShell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _checkNativeAlarm();
+    if (state == AppLifecycleState.resumed) {
+      _checkNativeAlarm();
+      ref.read(studyTimerProvider.notifier).refresh();
+    }
   }
 
   Future<void> _loadPreferences() async {
@@ -256,13 +329,9 @@ class _AppShellState extends ConsumerState<AppShell>
         }
       }
       final userId = ref.read(cloudUserProvider).asData?.value?.id;
-      final genderKey = userId == null
-          ? 'profile.gender'
-          : 'profile.gender:$userId';
-      if (!saved.any((preference) => preference.key == 'profile.grade') ||
-          (userId != null && !saved.any((p) => p.key == genderKey))) {
+      if (userId == null &&
+          !saved.any((preference) => preference.key == 'profile.grade')) {
         final profile = await _selectEducationGrade(
-          askGender: userId != null,
           initialGrade: saved
               .where((p) => p.key == 'profile.grade')
               .firstOrNull
@@ -271,9 +340,6 @@ class _AppShellState extends ConsumerState<AppShell>
         if (profile == null || !mounted) return;
         await db.transaction(() async {
           await db.savePreference('profile.grade', profile.grade);
-          if (userId != null) {
-            await db.savePreference(genderKey, profile.gender);
-          }
         });
       }
       final alarms = await db.select(db.alarms).get();
@@ -644,6 +710,25 @@ class _AppShellState extends ConsumerState<AppShell>
               'تنظیمات',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
+            ListTile(
+              key: const Key('open-appearance'),
+              leading: const Icon(Icons.palette_outlined),
+              title: Text(
+                ref.watch(languageProvider)
+                    ? 'Themes and backgrounds'
+                    : 'تم و پس‌زمینه',
+              ),
+              subtitle: Text(ref.watch(appSceneProvider).title),
+              trailing: const Icon(Icons.chevron_left_rounded),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(this.context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AppearancePage(),
+                  ),
+                );
+              },
+            ),
             SwitchListTile.adaptive(
               value: ref.watch(darkModeProvider),
               onChanged: (value) async {
@@ -652,7 +737,7 @@ class _AppShellState extends ConsumerState<AppShell>
                     .savePreference('darkMode', '$value');
                 ref.read(darkModeProvider.notifier).state = value;
               },
-              title: const Text('تم تیره کهکشانی'),
+              title: const Text('حالت تیره'),
               secondary: const Icon(
                 Icons.auto_awesome_rounded,
                 color: AppColors.emerald,
@@ -684,95 +769,15 @@ class _AppShellState extends ConsumerState<AppShell>
   );
 }
 
-class CosmicGlow extends StatelessWidget {
+/// Compatibility wrapper shared by the signed-out landing and the app shell.
+class CosmicGlow extends ConsumerWidget {
   const CosmicGlow(this.progress, {this.dark = true, super.key});
   final double progress;
   final bool dark;
   @override
-  Widget build(BuildContext context) => RepaintBoundary(
-    child: CustomPaint(painter: _GlowPainter(progress, dark)),
+  Widget build(BuildContext context, WidgetRef ref) => SceneBackground(
+    scene: ref.watch(appSceneProvider),
+    progress: progress,
+    dark: dark,
   );
-}
-
-class _GlowPainter extends CustomPainter {
-  const _GlowPainter(this.progress, this.dark);
-  final double progress;
-  final bool dark;
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = dark ? AppColors.background : const Color(0xFFF4F8F6),
-    );
-    final center = Offset(size.width * .8, size.height * .1);
-    canvas.drawCircle(
-      center,
-      size.width * .75,
-      Paint()
-        ..shader =
-            RadialGradient(
-              colors: [
-                AppColors.emerald.withValues(alpha: .06 + progress * .04),
-                Colors.transparent,
-              ],
-            ).createShader(
-              Rect.fromCircle(center: center, radius: size.width * .75),
-            ),
-    );
-    final lower = Offset(size.width * .12, size.height * .7);
-    canvas.drawCircle(
-      lower,
-      size.width * .65,
-      Paint()
-        ..shader =
-            RadialGradient(
-              colors: [
-                const Color(0xFF6457C9).withValues(alpha: dark ? .10 : .04),
-                Colors.transparent,
-              ],
-            ).createShader(
-              Rect.fromCircle(center: lower, radius: size.width * .65),
-            ),
-    );
-    final random = math.Random(1947);
-    final count = (size.width * size.height / 4000).round().clamp(55, 160);
-    for (var i = 0; i < count; i++) {
-      final point = Offset(
-        random.nextDouble() * size.width,
-        random.nextDouble() * size.height,
-      );
-      final radius = .45 + random.nextDouble() * 1.15;
-      final phase = random.nextDouble() * math.pi * 2;
-      final alpha =
-          (.28 + .38 * (.5 + .5 * math.sin(progress * math.pi * 2 + phase))) *
-          (dark ? 1 : .7);
-      final color = (dark ? const Color(0xFFD5EFE9) : const Color(0xFF426E66))
-          .withValues(alpha: alpha);
-      if (radius > 1.4) {
-        canvas.drawCircle(
-          point,
-          radius * 3,
-          Paint()..color = color.withValues(alpha: alpha * .11),
-        );
-        final sparkle = Paint()
-          ..color = color.withValues(alpha: alpha * .5)
-          ..strokeWidth = .6;
-        canvas.drawLine(
-          point - const Offset(0, 3.5),
-          point + const Offset(0, 3.5),
-          sparkle,
-        );
-        canvas.drawLine(
-          point - const Offset(3.5, 0),
-          point + const Offset(3.5, 0),
-          sparkle,
-        );
-      }
-      canvas.drawCircle(point, radius, Paint()..color = color);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _GlowPainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.dark != dark;
 }

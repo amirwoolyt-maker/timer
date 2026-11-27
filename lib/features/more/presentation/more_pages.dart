@@ -961,8 +961,8 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
           .maybeWhen(data: (rows) => rows, orElse: () => const <Alarm>[]);
       for (final alarm in rows) {
         final dayKey = '${alarm.id}:${now.year}-${now.month}-${now.day}';
-        if (alarm.enabled &&
-            (alarm.id == pending ||
+        if (alarm.id == pending ||
+            (alarm.enabled &&
                 (alarm.hour == now.hour &&
                     alarm.minute == now.minute &&
                     !_handled.contains(dayKey)))) {
@@ -1217,15 +1217,13 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       } catch (_) {}
     }
 
-    if (test && PlatformServices.supportsBackgroundAlarms) {
-      if (!await PlatformServices.startAlarmPreview(alarm.id)) {
+    if (PlatformServices.supportsBackgroundAlarms) {
+      if (!await PlatformServices.startAlarmChallenge(alarm.id)) {
         playbackError =
-            'پیش‌نمایش صدا شروع نشد؛ اگر زنگی در حال پخش است، اول آن را حل کن.';
+            'زنگ آزمایشی شروع نشد؛ اگر زنگ دیگری در حال پخش است، اول آن را حل کن.';
       }
-    } else if (!PlatformServices.supportsBackgroundAlarms) {
-      await ring();
     } else {
-      playbackError = await PlatformServices.pendingAlarmError();
+      await ring();
     }
     final soundLoop = PlatformServices.supportsBackgroundAlarms
         ? null
@@ -1244,7 +1242,15 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
         : null;
     _challengePlaybackCheck = playbackCheck;
     final cooldownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (cooldown > 0) updateDialog?.call(() => cooldown--);
+      if (cooldown > 0) {
+        final remaining = remainingAlarmCooldown(
+          cooldownDeadline,
+          DateTime.now(),
+        );
+        updateDialog?.call(
+          () => cooldown = remaining < cooldown ? remaining : cooldown - 1,
+        );
+      }
     });
     _challengeCooldownTicker = cooldownTicker;
     bool? solved;
@@ -1340,7 +1346,12 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
                             update(() {
                               error = 'پاسخ درست نیست؛ دوباره تلاش کن.';
                               input.clear();
-                              if (failures % 6 == 0) cooldown = 30;
+                              if (failures % 6 == 0) {
+                                cooldown = 30;
+                                cooldownDeadline = DateTime.now()
+                                    .add(const Duration(seconds: 30))
+                                    .toIso8601String();
+                              }
                             });
                             final db = ref.read(databaseProvider);
                             try {
@@ -1355,9 +1366,7 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
                                 if (failures % 6 == 0) {
                                   await db.savePreference(
                                     cooldownKey,
-                                    DateTime.now()
-                                        .add(const Duration(seconds: 30))
-                                        .toIso8601String(),
+                                    cooldownDeadline!,
                                   );
                                 }
                               });
@@ -1383,7 +1392,6 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       updateDialog = null;
       soundLoop?.cancel();
       playbackCheck?.cancel();
-      if (test) await PlatformServices.stopAlarmPreview(alarm.id);
       cooldownTicker.cancel();
       Future<void>.delayed(const Duration(milliseconds: 350), input.dispose);
       _prompting = false;
@@ -1394,7 +1402,7 @@ class _AlarmsPageState extends ConsumerState<AlarmsPage> {
       await (db.update(db.alarms)..where((r) => r.id.equals(alarm.id))).write(
         const AlarmsCompanion(wrongAttempts: Value(0)),
       );
-      if (!test) await PlatformServices.stopAlarm(alarm.id);
+      await PlatformServices.stopAlarm(alarm.id);
       if (mounted) {
         _toolNotice(
           context,
@@ -3116,145 +3124,6 @@ const _resourceCatalog = <Map<String, dynamic>>[
   },
 ];
 
-const _universityCatalog = <Map<String, dynamic>>[
-  {
-    "name": "دانشگاه شریف",
-    "emoji": "⚙️",
-    "city": "تهران",
-    "specialties": "مهندسی، علوم پایه",
-    "description":
-        "برترین دانشگاه مهندسی ایران. مدرک آن بالاترین مقبولیت در بازار کار.",
-    "rank": 1,
-    "score": 98,
-  },
-  {
-    "name": "دانشگاه تهران",
-    "emoji": "🏛️",
-    "city": "تهران",
-    "specialties": "همه رشته‌ها",
-    "description": "قدیمی‌ترین و معتبرترین دانشگاه ایران. دانشگاه مادر کشور.",
-    "rank": 2,
-    "score": 95,
-  },
-  {
-    "name": "دانشگاه امیرکبیر (پلی‌تکنیک)",
-    "emoji": "🔧",
-    "city": "تهران",
-    "specialties": "مهندسی",
-    "description": "یکی از معتبرترین دانشگاه‌های مهندسی ایران.",
-    "rank": 3,
-    "score": 92,
-  },
-  {
-    "name": "دانشگاه علوم پزشکی تهران",
-    "emoji": "🩺",
-    "city": "تهران",
-    "specialties": "پزشکی، داروسازی",
-    "description": "برترین دانشگاه علوم پزشکی ایران.",
-    "rank": 4,
-    "score": 91,
-  },
-  {
-    "name": "دانشگاه فردوسی مشهد",
-    "emoji": "🌅",
-    "city": "مشهد",
-    "specialties": "همه رشته‌ها",
-    "description": "یکی از بزرگترین و معتبرترین دانشگاه‌های ایران.",
-    "rank": 5,
-    "score": 89,
-  },
-  {
-    "name": "دانشگاه شهید بهشتی",
-    "emoji": "📚",
-    "city": "تهران",
-    "specialties": "علوم انسانی، حقوق، مدیریت",
-    "description": "معتبر در علوم انسانی و حقوق.",
-    "rank": 6,
-    "score": 88,
-  },
-  {
-    "name": "دانشگاه علم و صنعت",
-    "emoji": "🏭",
-    "city": "تهران",
-    "specialties": "مهندسی، تکنولوژی",
-    "description": "تخصصی در مهندسی و فناوری.",
-    "rank": 7,
-    "score": 86,
-  },
-  {
-    "name": "دانشگاه تبریز",
-    "emoji": "🏔️",
-    "city": "تبریز",
-    "specialties": "همه رشته‌ها",
-    "description": "قدیمی‌ترین دانشگاه منطقه شمال غرب.",
-    "rank": 8,
-    "score": 84,
-  },
-  {
-    "name": "دانشگاه اصفهان",
-    "emoji": "🌷",
-    "city": "اصفهان",
-    "specialties": "همه رشته‌ها",
-    "description": "یکی از قدیمی‌ترین و معتبرترین دانشگاه‌های ایران.",
-    "rank": 9,
-    "score": 83,
-  },
-  {
-    "name": "دانشگاه صنعتی اصفهان",
-    "emoji": "🚜",
-    "city": "اصفهان",
-    "specialties": "مهندسی، کشاورزی",
-    "description": "معتبر در مهندسی و کشاورزی.",
-    "rank": 10,
-    "score": 82,
-  },
-  {
-    "name": "دانشگاه علوم پزشکی شهید بهشتی",
-    "emoji": "⚕️",
-    "city": "تهران",
-    "specialties": "پزشکی",
-    "description": "یکی از معتبرترین دانشگاه‌های علوم پزشکی.",
-    "rank": 11,
-    "score": 81,
-  },
-  {
-    "name": "دانشگاه گیلان",
-    "emoji": "🌳",
-    "city": "رشت",
-    "specialties": "همه رشته‌ها",
-    "description": "معتبر در منطقه شمال کشور.",
-    "rank": 12,
-    "score": 79,
-  },
-  {
-    "name": "دانشگاه مازندران",
-    "emoji": "🌊",
-    "city": "بابلسر",
-    "specialties": "همه رشته‌ها",
-    "description": "بزرگترین دانشگاه شمال کشور.",
-    "rank": 13,
-    "score": 78,
-  },
-  {
-    "name": "دانشگاه خوارزمی",
-    "emoji": "🎓",
-    "city": "تهران",
-    "specialties": "علوم تربیتی، روان‌شناسی",
-    "description": "معتبر در علوم تربیتی و روان‌شناسی.",
-    "rank": 14,
-    "score": 77,
-  },
-  {
-    "name": "دانشگاه بوعلی سینا",
-    "emoji": "⚕️",
-    "city": "همدان",
-    "specialties": "همه رشته‌ها",
-    "description": "معتبر در منطقه غرب کشور.",
-    "rank": 15,
-    "score": 75,
-  },
-];
-
 class ResourcesPage extends ConsumerStatefulWidget {
   const ResourcesPage({super.key});
   @override
@@ -3446,119 +3315,6 @@ class _ResourcesPageState extends ConsumerState<ResourcesPage> {
               ),
             ),
             if (rows.isEmpty) const Text('منبعی با این جست‌وجو پیدا نشد.'),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class UniversityDirectoryPage extends ConsumerStatefulWidget {
-  const UniversityDirectoryPage({super.key});
-  @override
-  ConsumerState<UniversityDirectoryPage> createState() =>
-      _UniversityDirectoryPageState();
-}
-
-class _UniversityDirectoryPageState
-    extends ConsumerState<UniversityDirectoryPage> {
-  String _query = '';
-  @override
-  Widget build(BuildContext context) {
-    final favorites = _toolRecords(ref, 'tools.universities');
-    final rows = _universityCatalog
-        .where(
-          (r) =>
-              '${r['name']} ${r['city']} ${r['specialties']}'.contains(_query),
-        )
-        .toList();
-    return _ToolLoading(
-      child: PageFrame(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _ToolHeading(
-              _toolText(ref, 'شناخت دانشگاه‌ها', 'University directory'),
-              _toolText(
-                ref,
-                'فهرست و ترتیب از پروژهٔ اولیه منتقل شده است؛ این ترتیب، رتبه‌بندی رسمی یا به‌روز نیست.',
-                'This list preserves the original project’s ordering, not a current official ranking.',
-              ),
-            ),
-            TextField(
-              onChanged: (v) => setState(() => _query = v.trim()),
-              decoration: const InputDecoration(
-                hintText: 'نام دانشگاه، شهر یا رشته',
-                prefixIcon: Icon(Icons.search),
-              ),
-            ),
-            const SizedBox(height: 14),
-            ...rows.map(
-              (row) => _ToolPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: AppColors.emerald.withValues(
-                            alpha: .12,
-                          ),
-                          child: Text(
-                            faDigits(row['rank']!),
-                            style: const TextStyle(color: AppColors.emerald),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            '${row['name']}',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'علاقه‌مندی',
-                          onPressed: () => _saveToolRecords(
-                            ref,
-                            'tools.universities',
-                            favorites.any((f) => f['rank'] == row['rank'])
-                                ? favorites
-                                      .where((f) => f['rank'] != row['rank'])
-                                      .toList()
-                                : [
-                                    ...favorites,
-                                    {'rank': row['rank']},
-                                  ],
-                          ),
-                          icon: Icon(
-                            favorites.any((f) => f['rank'] == row['rank'])
-                                ? Icons.favorite
-                                : Icons.favorite_border,
-                            color: AppColors.red,
-                            size: 20,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      '${row['city']} · ${row['specialties']}',
-                      style: const TextStyle(
-                        color: AppColors.muted,
-                        fontSize: 12,
-                        height: 1.7,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${row['description']}',
-                      style: const TextStyle(fontSize: 12, height: 1.8),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (rows.isEmpty) const Text('دانشگاهی پیدا نشد.'),
           ],
         ),
       ),
